@@ -213,6 +213,65 @@
 <script src="/static/js/bootstrap.bundle.min.js"></script>
 
 <script>
+    // === 🚀 进度条动画控制引擎 ===
+    let progressInterval;
+
+    function startProgress(taskName) {
+        const logBox = document.getElementById('log_area'); // 统一修正为 log_area
+        if (!logBox) return;
+
+        logBox.innerHTML = `
+            <div style="color: #0dcaf0; margin-bottom: 10px; font-family: monospace;">
+                <i class="bi bi-terminal-fill"></i> [System] ${taskName}...
+            </div>
+            <div class="progress" style="height: 20px; background-color: #2b3035; border-radius: 0;">
+                <div id="cmd_progress" class="progress-bar progress-bar-striped progress-bar-animated bg-info" 
+                     role="progressbar" style="width: 15%; transition: width 0.4s ease;" 
+                     aria-valuenow="15" aria-valuemin="0" aria-valuemax="100">15%</div>
+            </div>
+            <div id="progress_text" style="color: #6c757d; margin-top: 5px; font-size: 12px; font-family: monospace;">
+                > Initiating SSH connection to switch...
+            </div>
+        `;
+
+        let currentWidth = 15;
+        const bar = document.getElementById('cmd_progress');
+        const pText = document.getElementById('progress_text');
+        
+        clearInterval(progressInterval); // 清除可能残留的定时器
+        progressInterval = setInterval(() => {
+            if (!document.getElementById('cmd_progress')) {
+                clearInterval(progressInterval); return;
+            }
+            if (currentWidth >= 90) {
+                clearInterval(progressInterval); 
+                pText.innerText = "> Awaiting final response from switch...";
+            } else {
+                currentWidth += Math.random() * 6 + 2; 
+                if (currentWidth > 90) currentWidth = 90;
+                document.getElementById('cmd_progress').style.width = currentWidth + '%';
+                document.getElementById('cmd_progress').innerText = Math.floor(currentWidth) + '%';
+                
+                if(currentWidth > 40 && currentWidth < 60) pText.innerText = "> Sending configuration commands...";
+                if(currentWidth >= 60) pText.innerText = "> Reading current-configuration and binding tables...";
+            }
+        }, 600); 
+    }
+
+    function finishProgress() {
+        clearInterval(progressInterval);
+        const bar = document.getElementById('cmd_progress');
+        const pText = document.getElementById('progress_text');
+        if (bar) {
+            bar.style.width = '100%';
+            bar.innerText = '100%';
+            bar.classList.remove('bg-info');
+            bar.classList.add('bg-success'); 
+            pText.innerText = "> Task completed successfully!";
+            pText.style.color = "#198754";
+        }
+    }
+
     document.addEventListener("DOMContentLoaded", function() {
         if (typeof bootstrap === 'undefined') alert("无法加载本地 Bootstrap JS！请检查 static 目录。");
         loadSwitches(); 
@@ -220,8 +279,8 @@
 
     let switchData = []; 
 
-    // 通用 API 请求
-    async function apiCall(endpoint, data) {
+    // === 核心层：通用 API 请求 (已深度集成进度条) ===
+    async function apiCall(endpoint, data, taskMessage = "Processing request") {
         let payload = {};
         const device_actions = ['/test_connection', '/get_interfaces', '/get_port_info', '/bind_port', '/del_port_binding', '/save_config', '/get_acl', '/add_acl', '/del_acl'];
 
@@ -236,7 +295,9 @@
             payload = data;
         }
 
-        document.getElementById('log_area').innerHTML = "⏳ 正在执行，请稍候...<br>";
+        // 🔥 触发进度条！
+        startProgress(taskMessage);
+
         try {
             const response = await fetch(endpoint, {
                 method: 'POST',
@@ -245,27 +306,34 @@
             });
             if (response.redirected) { window.location.href = response.url; return null; }
             const result = await response.json();
+            
+            // 🔥 进度条 100% 变绿
+            finishProgress();
+
+            // 🔥 刻意等待 0.6 秒，让操作员爽一下 100% 的成功感，然后再显示具体日志
+            await new Promise(r => setTimeout(r, 600));
+
             if(result.log) document.getElementById('log_area').innerHTML = result.log;
-            else if (result.status === 'success') document.getElementById('log_area').innerHTML = "✅ 操作成功";
+            else if (result.status === 'success') document.getElementById('log_area').innerHTML = "<span style='color: #20c997;'>✅ 操作成功</span>";
+            
             if(result.status === 'error') {
                 alert("❌ 错误: " + result.msg);
-                document.getElementById('log_area').innerHTML += `<br><span class="status-deny">❌ 失败: ${result.msg}</span>`;
+                document.getElementById('log_area').innerHTML = `<span class="status-deny" style="color: red;">❌ 失败: ${result.msg}</span>`;
             }
             return result;
         } catch (error) {
             console.error(error);
-            document.getElementById('log_area').innerHTML = "❌ 网络请求失败";
+            clearInterval(progressInterval);
+            document.getElementById('log_area').innerHTML = "<span style='color: red;'>❌ 网络请求失败</span>";
             return null;
         }
     }
 
-    // === 🔥 新增：批量备份 JS 逻辑 ===
+    // === 新增：批量备份 ===
     async function batchBackup() {
         if(switchData.length === 0) return alert("请先在‘管理设备列表’中添加交换机！");
         if(!confirm(`即将对 ${switchData.length} 台设备执行配置备份。\n过程可能需要几分钟，请耐心等待。\n确定继续吗？`)) return;
-        
-        // 这里的请求不需要带 ip/pass 参数，因为后端会直接从数据库读
-        await apiCall('/batch_backup', {});
+        await apiCall('/batch_backup', {}, "Executing batch backup for all switches");
     }
 
     // === 资产管理 ===
@@ -307,7 +375,7 @@
             pass: document.getElementById('new_pass').value
         };
         if(!d.ip || !d.pass) return alert("IP 和 密码必填");
-        const res = await apiCall('/api/switches/add', d);
+        const res = await apiCall('/api/switches/add', d, "Adding new switch to database");
         if (res && res.status === 'success') {
             loadSwitches();
             document.getElementById('new_name').value = '';
@@ -318,23 +386,24 @@
 
     async function delSwitch(id) {
         if(!confirm("确定删除该设备记录吗？")) return;
-        const res = await apiCall('/api/switches/delete', {id});
+        const res = await apiCall('/api/switches/delete', {id}, "Deleting switch record");
         if (res && res.status === 'success') loadSwitches();
     }
 
     async function changeSysPass() {
         const p = document.getElementById('new_sys_pass').value;
         if(!p) return alert("密码不能为空");
-        const res = await apiCall('/api/change_password', {new_password: p});
+        const res = await apiCall('/api/change_password', {new_password: p}, "Updating system password");
         if(res && res.status === 'success') { alert("密码修改成功，请重新登录"); location.href = '/logout'; }
     }
 
-    // === 业务操作 (保持不变) ===
-    async function testConnection() { await apiCall('/test_connection', {}); }
+    // === 业务操作 ===
+    async function testConnection() { await apiCall('/test_connection', {}, "Testing connection to switch"); }
+    
     async function getInterfaces() {
         const select = document.getElementById('port_name');
         select.innerHTML = '<option>⏳ 加载中...</option>';
-        const res = await apiCall('/get_interfaces', {});
+        const res = await apiCall('/get_interfaces', {}, "Fetching physical interfaces");
         select.innerHTML = ''; 
         if(res && res.status === 'success') {
             if(res.data.length === 0) select.innerHTML = '<option value="">⚠️ 未找到物理接口</option>'; 
@@ -344,12 +413,12 @@
             }
         } else select.innerHTML = '<option value="">❌ 获取失败</option>'; 
     }
-// === 🛠️ 升级版：执行绑定 (带防呆拦截) ===
+
+    // === 绑定规则下发 ===
     async function applyPort() {
         const select = document.getElementById('port_name');
         if(select.selectedIndex === -1 || !select.value) return alert("请先选择端口");
         
-        // 获取当前下拉框里显示的文本 (例如 "[UP] [Trunk] GE1/0/1")
         const portText = select.options[select.selectedIndex].text;
         const selectedMode = document.querySelector('input[name="bindMode"]:checked').value;
         const vlanId = document.getElementById('vlan_id').value;
@@ -358,45 +427,33 @@
 
         if(!vlanId || !bindIp || !bindMac) return alert("请填写完整 VLAN、IP 和 MAC 信息");
 
-        // 🛡️ 🔥 核心拦截逻辑：坚决防止选错模式导致全网断网！
         if (selectedMode === 'access' && portText.includes('[Trunk]')) {
-            alert("⛔ 严重操作拦截！\n\n系统检测到该端口为【Trunk 模式】（通常连接 AP）。\n您不能在此端口下发【Access 严格模式】，这会写入 'ip verify source' 导致所有无线的手机断网！\n\n👉 解决：请在上方策略区切换为【Trunk 混合模式】后再执行！");
-            return; // 终止函数，绝对不向后台发送请求
+            alert("⛔ 严重操作拦截！\n\n系统检测到该端口为【Trunk 模式】（通常连接 AP）。\n您不能在此端口下发【Access 严格模式】！");
+            return;
         }
 
         if (selectedMode === 'trunk' && portText.includes('[Access]')) {
-            if(!confirm("⚠️ 模式警告！\n\n该端口为普通的【Access 模式】，通常建议使用 'Access 严格模式' 防御力更高。\n\n您确定要强制使用 Trunk 混合模式下发吗？")) {
-                return; // 用户取消
-            }
+            if(!confirm("⚠️ 模式警告！\n\n该端口为普通的【Access 模式】，确定要强制使用 Trunk 混合模式下发吗？")) return;
         }
 
-        // 验证通过，发送请求
-        const d = { 
-            interface: select.value, 
-            vlan: vlanId, 
-            bind_ip: bindIp, 
-            mac: bindMac,
-            mode: selectedMode
-        };
-        await apiCall('/bind_port', d); 
+        const d = { interface: select.value, vlan: vlanId, bind_ip: bindIp, mac: bindMac, mode: selectedMode };
+        await apiCall('/bind_port', d, `Applying binding rules to ${select.value}`); 
         queryPort();
     }
 
-    // === 🛠️ 优化查询展示：避免 Trunk 口 PVID 覆盖真实业务 VLAN ===
+    // === 恢复了完整的表格渲染逻辑 ===
     async function queryPort() {
         const select = document.getElementById('port_name');
         const port = select.value;
         if(!port) return alert("请先获取并选择端口");
         const portText = select.options[select.selectedIndex].text;
 
-        const res = await apiCall('/get_port_info', {interface: port});
+        const res = await apiCall('/get_port_info', {interface: port}, `Reading configurations for ${port}`);
+        
         if(res && res.status === 'success') {
-            // 如果是 Access 模式，自动填入查到的 VLAN；
-            // 如果是 Trunk 模式，不要用查到的 PVID (如199) 去覆盖用户手填的业务 VLAN (如213)
             if(res.data.vlan && portText.includes('[Access]')) {
                 document.getElementById('vlan_id').value = res.data.vlan;
             }
-
             const tbody = document.getElementById('bind_table_body'); 
             tbody.innerHTML = '';
             if(res.data.bindings.length === 0) {
@@ -404,7 +461,7 @@
             } else {
                 document.querySelector('#bind_table_body').parentElement.querySelector('thead tr').innerHTML = '<th>IP</th><th>MAC</th><th>所在 VLAN</th><th>模式</th><th>操作</th>';
                 res.data.bindings.forEach(bind => { 
-                    const modeBadge = bind.mode === 'access' ? '<span class="badge bg-secondary">接口级</span>' : '<span class="badge bg-primary">全局/接口级</span>';
+                    const modeBadge = bind.mode === 'access' ? '<span class="badge bg-secondary">Access 标准绑定</span>' : '<span class="badge bg-primary">Trunk 混合绑定</span>';
                     tbody.innerHTML += `
                     <tr>
                         <td>${bind.ip}</td>
@@ -418,31 +475,42 @@
         }
     }
 
-    // 接收 mode 和 vlan 参数
+    // === 解绑操作 ===
     async function delBinding(ip, mac, mode, vlan) {
-        if(!confirm(`确定解绑 IP: ${ip} 吗？\n当前模式: ${mode}`)) return;
-        await apiCall('/del_port_binding', { 
-            interface: document.getElementById('port_name').value, 
-            del_ip: ip, 
-            del_mac: mac,
-            mode: mode,
-            vlan: vlan
-        }); 
+        const select = document.getElementById('port_name');
+        if (select.selectedIndex === -1 || !select.value) return;
+        
+        const portText = select.options[select.selectedIndex].text;
+        const selectedMode = document.querySelector('input[name="bindMode"]:checked').value;
+
+        if (selectedMode === 'access' && portText.includes('[Trunk]')) {
+            alert("⛔ 解绑操作被拦截！\n\n您不能在 Access 模式下操作 Trunk 接口的数据。");
+            return;
+        }
+
+        const modeName = mode === 'access' ? 'Access 接口级' : 'Trunk 带VLAN标';
+        if(!confirm(`⚠️ 安全确认\n\n确定要从交换机中解绑以下终端吗？\nIP: ${ip}\nMAC: ${mac}\n规则类型: ${modeName}`)) return;
+
+        await apiCall('/del_port_binding', { interface: select.value, del_ip: ip, del_mac: mac, mode: mode, vlan: vlan }, `Removing binding for ${ip}`); 
         queryPort();
     }
-    async function saveConfig() { if(!confirm("确定要执行 save force 吗？")) return; await apiCall('/save_config', {}); alert("保存指令已发送"); }
+
+    async function saveConfig() { if(!confirm("确定要执行 save force 吗？")) return; await apiCall('/save_config', {}, "Saving configuration to switch flash"); }
+    
     async function loadAcl() {
-        const res = await apiCall('/get_acl', {});
+        const res = await apiCall('/get_acl', {}, "Fetching ACL rules");
         if(res && res.status === 'success') {
             const tbody = document.getElementById('acl_table_body'); tbody.innerHTML = '';
             res.data.forEach(rule => { tbody.innerHTML += `<tr><td>${rule.id}</td><td>${rule.action}</td><td>${rule.mac}</td><td><button class="btn btn-danger btn-sm" onclick="delAcl(${rule.id})">删除</button></td></tr>`; });
         }
     }
+    
     async function addAcl() {
         const mac = document.getElementById('acl_mac').value; const rule_id = document.getElementById('acl_id').value;
-        if(!mac) return alert("请输入 MAC 地址"); await apiCall('/add_acl', {mac, rule_id}); loadAcl();
+        if(!mac) return alert("请输入 MAC 地址"); await apiCall('/add_acl', {mac, rule_id}, "Adding new ACL rule"); loadAcl();
     }
-    async function delAcl(id) { if(confirm(`确定删除规则 ID ${id} 吗?`)) { await apiCall('/del_acl', {rule_id: id}); loadAcl(); } }
+    
+    async function delAcl(id) { if(confirm(`确定删除规则 ID ${id} 吗?`)) { await apiCall('/del_acl', {rule_id: id}, `Deleting ACL rule ${id}`); loadAcl(); } }
 </script>
 </body>
 </html>

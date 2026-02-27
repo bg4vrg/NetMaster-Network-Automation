@@ -1,12 +1,24 @@
-# H3C Switch Admin Tool v2.2.0
+# H3C Switch Admin Tool v2.3.0
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
 ![License](https://img.shields.io/badge/License-GPLv3-green)
-![Version](https://img.shields.io/badge/Version-v2.0.0-orange)
+![Version](https://img.shields.io/badge/Version-v2.3.0-orange)
 
 
 基于 Python 3.11 + Flask + Netmiko 开发的企业级 H3C 交换机 Web 运维平台。
 本项目致力于在**零额外硬件成本**的前提下，充分挖掘交换机底层安全特性，从早期的单一脚本工具不断进化为集成了 **资产管理**、**安全登录** 、**ACL 极简管理**和 **批量自动化备份** 的综合运维系统，实现堪比商业 NAC（网络准入控制）系统的安全管控能力。
+
+### 🚀 v2.3.0最新重大更新
+
+* **🛡️ 极致的安全准入机制 (混合 VLAN 完美兼容)**：
+  深度重构了针对 H3C 交换机的底层下发逻辑，完美解决了 IPSG (IP 源防欺骗) 与 DAI (ARP 动态检测) 模块在复杂网络下的死锁冲突。
+  * **Access 接口**：极简配置，利用隐式 VLAN 继承，实现 IP 伪造与 ARP 欺骗的“双重绝杀”。
+  * **Trunk 接口**：精准打标，确保 AP 无线端（手机）免密放行与有线端（电脑）严格准入的完美隔离。
+* **🛑 企业级“防呆”操作拦截**：
+  引入基于前后端联动的强校验机制。自动识别物理接口特征，严格拦截模式错配（如试图在 Trunk 口下发 Access 规则），彻底杜绝运维手滑导致的大面积断网事故。
+* **🖥️ 极客风动态交互体验**：
+  全新引入 Linux 终端风格的动态 SSH 进度条动画。实时反馈系统执行状态（如发起连接、下发指令、读取回显等），彻底消除因交换机响应慢带来的“网页假死”等待焦虑。
+
 
 ## ✨ v2.2.0 核心架构大升级
 
@@ -110,4 +122,9 @@ H3C-Switch-Admin-Tool/
 *![资产列表](./screenshots/switchlist.png)*
 
 ### 4. 设备端口保护
+
 *![设备端口保护](./screenshots/GEprotect.png)*
+
+### 5. 操作时增加进度条
+
+![image-20260227191408003](./screenshots/jindutiao.png)

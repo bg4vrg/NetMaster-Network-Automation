@@ -105,7 +105,7 @@ class H3CManager:
             
         return result
 
-    # === 🛠️ 终极修复版：获取端口详情 (同步更新替换顺序) ===
+# === 🛠️ 智能特征识别版：获取端口详情 ===
     def get_port_info(self, interface_name):
         conn = self._get_connection()
         output_iface = conn.send_command(f"display current-configuration interface {interface_name}")
@@ -115,10 +115,15 @@ class H3CManager:
         vlan = ""
         description = ""
         bindings = []
+        
+        # 🔥 核心修复：预扫描接口特征。如果存在 ip verify source，证明这是 Access 严格模式
+        is_strict_access = 'ip verify source' in output_iface
 
         # 1. 解析接口配置
         for line in output_iface.split('\n'):
             line = line.strip()
+            
+            # 获取端口的默认 VLAN / PVID
             if line.startswith('port access vlan'):
                 parts = line.split()
                 if len(parts) >= 4: vlan = parts[3]
@@ -130,20 +135,29 @@ class H3CManager:
                 parts = line.split(maxsplit=1)
                 if len(parts) > 1: description = parts[1].strip()
             
-            # Access 模式
+            # 解析接口下的绑定记录
             if 'source binding' in line and 'ip-address' in line:
                 ip_match = re.search(r'ip-address\s+([\d\.]+)', line)
                 mac_match = re.search(r'mac-address\s+([\w\-\.]+)', line)
+                
+                # 尝试提取行尾的 vlan 参数
+                vlan_inline_match = re.search(r'vlan\s+(\d+)', line)
+
                 if ip_match and mac_match:
+                    # 无论是否有尾巴，优先使用尾巴上的 vlan，否则使用端口默认 vlan
+                    bind_vlan = vlan_inline_match.group(1) if vlan_inline_match else vlan
+                    
+                    # 🔥 核心修复：根据接口的物理特征来打标签，不再被 vlan 尾巴误导
+                    bind_mode = 'access' if is_strict_access else 'trunk'
+
                     bindings.append({
                         'ip': ip_match.group(1), 
                         'mac': self.format_mac(mac_match.group(1)),
-                        'mode': 'access',
-                        'vlan': vlan
+                        'mode': bind_mode,
+                        'vlan': bind_vlan
                     })
 
-        # 2. 解析全局配置
-        # 🔥 修复：同步使用正确的替换顺序
+        # 2. 兼容解析可能残留的全局配置 (防御性代码保留)
         target_iface_short = interface_name.replace('Ten-GigabitEthernet', 'XGE')\
                                            .replace('XGigabitEthernet', 'XGE')\
                                            .replace('M-GigabitEthernet', 'MGE')\
@@ -153,8 +167,87 @@ class H3CManager:
             if 'Static' in line:
                 parts = line.split()
                 port_col = next((p for p in parts if p.startswith(('GE', 'XG', 'Gi', 'Te', 'BA'))), "")
+                port_col_short = port_col.replace('Ten-GigabitEthernet', 'XGE')\
+                                         .replace('XGigabitEthernet', 'XGE')\
+                                         .replace('M-GigabitEthernet', 'MGE')\
+                                         .replace('GigabitEthernet', 'GE')
                 
-                # 🔥 修复：同步使用正确的替换顺序
+                if port_col_short == target_iface_short:
+                    ip_val = next((p for p in parts if p.count('.') == 3), "Unknown")
+                    mac_val = next((p for p in parts if '-' in p and len(p) >= 12), "Unknown")
+                    vlan_val = next((p for p in parts if p.isdigit() and len(p) <= 4), "Unknown")
+                    
+                    if ip_val != "Unknown" and mac_val != "Unknown":
+                        if not any(b['ip'] == ip_val for b in bindings):
+                            bindings.append({
+                                'ip': ip_val,
+                                'mac': self.format_mac(mac_val),
+                                'mode': 'trunk',
+                                'vlan': vlan_val
+                            })
+
+        return {'vlan': vlan, 'bindings': bindings, 'description': description}, output_iface + "\n\n[Global Bindings]\n" + output_global# === 🛠️ 智能特征识别版：获取端口详情 ===
+    def get_port_info(self, interface_name):
+        conn = self._get_connection()
+        output_iface = conn.send_command(f"display current-configuration interface {interface_name}")
+        output_global = conn.send_command("display ip source binding")
+        conn.disconnect()
+
+        vlan = ""
+        description = ""
+        bindings = []
+        
+        # 🔥 核心修复：预扫描接口特征。如果存在 ip verify source，证明这是 Access 严格模式
+        is_strict_access = 'ip verify source' in output_iface
+
+        # 1. 解析接口配置
+        for line in output_iface.split('\n'):
+            line = line.strip()
+            
+            # 获取端口的默认 VLAN / PVID
+            if line.startswith('port access vlan'):
+                parts = line.split()
+                if len(parts) >= 4: vlan = parts[3]
+            elif line.startswith('port trunk pvid vlan'):
+                parts = line.split()
+                if len(parts) >= 5: vlan = parts[4]
+                
+            elif line.startswith('description'):
+                parts = line.split(maxsplit=1)
+                if len(parts) > 1: description = parts[1].strip()
+            
+            # 解析接口下的绑定记录
+            if 'source binding' in line and 'ip-address' in line:
+                ip_match = re.search(r'ip-address\s+([\d\.]+)', line)
+                mac_match = re.search(r'mac-address\s+([\w\-\.]+)', line)
+                
+                # 尝试提取行尾的 vlan 参数
+                vlan_inline_match = re.search(r'vlan\s+(\d+)', line)
+
+                if ip_match and mac_match:
+                    # 无论是否有尾巴，优先使用尾巴上的 vlan，否则使用端口默认 vlan
+                    bind_vlan = vlan_inline_match.group(1) if vlan_inline_match else vlan
+                    
+                    # 🔥 核心修复：根据接口的物理特征来打标签，不再被 vlan 尾巴误导
+                    bind_mode = 'access' if is_strict_access else 'trunk'
+
+                    bindings.append({
+                        'ip': ip_match.group(1), 
+                        'mac': self.format_mac(mac_match.group(1)),
+                        'mode': bind_mode,
+                        'vlan': bind_vlan
+                    })
+
+        # 2. 兼容解析可能残留的全局配置 (防御性代码保留)
+        target_iface_short = interface_name.replace('Ten-GigabitEthernet', 'XGE')\
+                                           .replace('XGigabitEthernet', 'XGE')\
+                                           .replace('M-GigabitEthernet', 'MGE')\
+                                           .replace('GigabitEthernet', 'GE')
+
+        for line in output_global.split('\n'):
+            if 'Static' in line:
+                parts = line.split()
+                port_col = next((p for p in parts if p.startswith(('GE', 'XG', 'Gi', 'Te', 'BA'))), "")
                 port_col_short = port_col.replace('Ten-GigabitEthernet', 'XGE')\
                                          .replace('XGigabitEthernet', 'XGE')\
                                          .replace('M-GigabitEthernet', 'MGE')\
@@ -176,7 +269,7 @@ class H3CManager:
 
         return {'vlan': vlan, 'bindings': bindings, 'description': description}, output_iface + "\n\n[Global Bindings]\n" + output_global
 		
-# === 🛠️ 最终修复版：配置绑定 ===
+# === 🛠️ 终极完美版：配置绑定 (极致安全与精简) ===
     def configure_port_binding(self, interface_name, vlan_id, bind_ip, bind_mac, mode="access"):
         conn = self._get_connection()
         if mode == "access":
@@ -185,17 +278,15 @@ class H3CManager:
                 "stp edged-port",
                 f"port access vlan {vlan_id}",
                 "ip verify source ip-address mac-address",
-                # Access 模式：在接口下绑定
+                # Access 模式：纯净绑定，不带 vlan 标。利用底层隐式 PVID 继承，既防 IP 伪造，又防 ARP 欺骗
                 f"ip source binding ip-address {bind_ip} mac-address {self.format_mac(bind_mac)}"
             ]
         else: 
-            # Trunk 混合模式：不改变端口原有配置，直接下发绑定，并配置 VLAN
+            # Trunk 混合模式：带 vlan 标，依赖业务 VLAN 下的 ARP Detection
             cmds = [
                 f"interface {interface_name}",
-                # 🔥 核心修改：Trunk 也直接在接口下绑定！但不下发 ip verify source
-                f"ip source binding ip-address {bind_ip} mac-address {self.format_mac(bind_mac)}",
+                f"ip source binding ip-address {bind_ip} mac-address {self.format_mac(bind_mac)} vlan {vlan_id}",
                 "quit",
-                # 进入对应业务 VLAN 开启 ARP 检测
                 f"vlan {vlan_id}",
                 "arp detection enable"
             ]
@@ -205,16 +296,23 @@ class H3CManager:
         conn.disconnect()
         return output
 
-    # === 🛠️ 最终修复版：删除绑定 ===
+    # === 🛠️ 终极完美版：删除绑定 (不留死角) ===
     def delete_port_binding(self, interface_name, del_ip, del_mac, mode="access", vlan_id=None):
         conn = self._get_connection()
         
-        # 🔥 核心修改：既然 Access 和 Trunk 都是在接口下绑定的，那解绑逻辑就完全一样了！
-        cmds = [
-            f"interface {interface_name}",
-            f"undo ip source binding ip-address {del_ip} mac-address {self.format_mac(del_mac)}"
-        ]
-        
+        if mode == "access":
+            cmds = [
+                f"interface {interface_name}",
+                # Access 模式解绑：干净利落
+                f"undo ip source binding ip-address {del_ip} mac-address {self.format_mac(del_mac)}"
+            ]
+        else:
+            cmds = [
+                f"interface {interface_name}",
+                # Trunk 模式解绑：精准匹配 vlan 标
+                f"undo ip source binding ip-address {del_ip} mac-address {self.format_mac(del_mac)} vlan {vlan_id}"
+            ]
+            
         output = conn.send_config_set(cmds)
         conn.save_config()
         conn.disconnect()
