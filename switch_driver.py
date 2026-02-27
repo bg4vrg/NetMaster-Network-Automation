@@ -176,7 +176,7 @@ class H3CManager:
 
         return {'vlan': vlan, 'bindings': bindings, 'description': description}, output_iface + "\n\n[Global Bindings]\n" + output_global
 		
-    # === 🛠️ 升级版：配置绑定（根据模式下发不同命令） ===
+# === 🛠️ 最终修复版：配置绑定 ===
     def configure_port_binding(self, interface_name, vlan_id, bind_ip, bind_mac, mode="access"):
         conn = self._get_connection()
         if mode == "access":
@@ -185,14 +185,17 @@ class H3CManager:
                 "stp edged-port",
                 f"port access vlan {vlan_id}",
                 "ip verify source ip-address mac-address",
+                # Access 模式：在接口下绑定
                 f"ip source binding ip-address {bind_ip} mac-address {self.format_mac(bind_mac)}"
             ]
-        else: # trunk 模式 (全局绑定 + VLAN ARP 检测)
+        else: 
+            # Trunk 混合模式：不改变端口原有配置，直接下发绑定，并配置 VLAN
             cmds = [
-                # 1. 全局绑定 (退出接口视图)
+                f"interface {interface_name}",
+                # 🔥 核心修改：Trunk 也直接在接口下绑定！但不下发 ip verify source
+                f"ip source binding ip-address {bind_ip} mac-address {self.format_mac(bind_mac)}",
                 "quit",
-                f"ip source binding ip-address {bind_ip} mac-address {self.format_mac(bind_mac)} interface {interface_name} vlan {vlan_id}",
-                # 2. 开启对应 VLAN 的 arp detection
+                # 进入对应业务 VLAN 开启 ARP 检测
                 f"vlan {vlan_id}",
                 "arp detection enable"
             ]
@@ -202,20 +205,16 @@ class H3CManager:
         conn.disconnect()
         return output
 
-    # === 🛠️ 升级版：删除绑定（根据模式执行不同的 undo） ===
+    # === 🛠️ 最终修复版：删除绑定 ===
     def delete_port_binding(self, interface_name, del_ip, del_mac, mode="access", vlan_id=None):
         conn = self._get_connection()
-        if mode == "access":
-            cmds = [
-                f"interface {interface_name}",
-                f"undo ip source binding ip-address {del_ip} mac-address {self.format_mac(del_mac)}"
-            ]
-        else: # trunk 模式解绑必须带上 interface 和 vlan
-            cmds = [
-                "quit",
-                f"undo ip source binding ip-address {del_ip} mac-address {self.format_mac(del_mac)} interface {interface_name} vlan {vlan_id}"
-            ]
-            
+        
+        # 🔥 核心修改：既然 Access 和 Trunk 都是在接口下绑定的，那解绑逻辑就完全一样了！
+        cmds = [
+            f"interface {interface_name}",
+            f"undo ip source binding ip-address {del_ip} mac-address {self.format_mac(del_mac)}"
+        ]
+        
         output = conn.send_config_set(cmds)
         conn.save_config()
         conn.disconnect()

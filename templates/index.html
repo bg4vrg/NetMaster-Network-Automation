@@ -135,8 +135,10 @@
                             </div>
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label">VLAN ID</label>
-                            <input type="text" class="form-control" id="vlan_id" placeholder="202">
+                            <label class="form-label" title="Trunk口请务必填入需要开启ARP拦截的业务VLAN">
+                                业务 VLAN ID <i class="bi bi-question-circle"></i>
+                            </label>
+                            <input type="text" class="form-control" id="vlan_id" placeholder="如: 213">
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">绑定 IP</label>
@@ -342,47 +344,78 @@
             }
         } else select.innerHTML = '<option value="">❌ 获取失败</option>'; 
     }
-async function queryPort() {
-        const port = document.getElementById('port_name').value;
+// === 🛠️ 升级版：执行绑定 (带防呆拦截) ===
+    async function applyPort() {
+        const select = document.getElementById('port_name');
+        if(select.selectedIndex === -1 || !select.value) return alert("请先选择端口");
+        
+        // 获取当前下拉框里显示的文本 (例如 "[UP] [Trunk] GE1/0/1")
+        const portText = select.options[select.selectedIndex].text;
+        const selectedMode = document.querySelector('input[name="bindMode"]:checked').value;
+        const vlanId = document.getElementById('vlan_id').value;
+        const bindIp = document.getElementById('bind_ip').value;
+        const bindMac = document.getElementById('bind_mac').value;
+
+        if(!vlanId || !bindIp || !bindMac) return alert("请填写完整 VLAN、IP 和 MAC 信息");
+
+        // 🛡️ 🔥 核心拦截逻辑：坚决防止选错模式导致全网断网！
+        if (selectedMode === 'access' && portText.includes('[Trunk]')) {
+            alert("⛔ 严重操作拦截！\n\n系统检测到该端口为【Trunk 模式】（通常连接 AP）。\n您不能在此端口下发【Access 严格模式】，这会写入 'ip verify source' 导致所有无线的手机断网！\n\n👉 解决：请在上方策略区切换为【Trunk 混合模式】后再执行！");
+            return; // 终止函数，绝对不向后台发送请求
+        }
+
+        if (selectedMode === 'trunk' && portText.includes('[Access]')) {
+            if(!confirm("⚠️ 模式警告！\n\n该端口为普通的【Access 模式】，通常建议使用 'Access 严格模式' 防御力更高。\n\n您确定要强制使用 Trunk 混合模式下发吗？")) {
+                return; // 用户取消
+            }
+        }
+
+        // 验证通过，发送请求
+        const d = { 
+            interface: select.value, 
+            vlan: vlanId, 
+            bind_ip: bindIp, 
+            mac: bindMac,
+            mode: selectedMode
+        };
+        await apiCall('/bind_port', d); 
+        queryPort();
+    }
+
+    // === 🛠️ 优化查询展示：避免 Trunk 口 PVID 覆盖真实业务 VLAN ===
+    async function queryPort() {
+        const select = document.getElementById('port_name');
+        const port = select.value;
         if(!port) return alert("请先获取并选择端口");
+        const portText = select.options[select.selectedIndex].text;
+
         const res = await apiCall('/get_port_info', {interface: port});
         if(res && res.status === 'success') {
-            if(res.data.vlan) document.getElementById('vlan_id').value = res.data.vlan;
+            // 如果是 Access 模式，自动填入查到的 VLAN；
+            // 如果是 Trunk 模式，不要用查到的 PVID (如199) 去覆盖用户手填的业务 VLAN (如213)
+            if(res.data.vlan && portText.includes('[Access]')) {
+                document.getElementById('vlan_id').value = res.data.vlan;
+            }
+
             const tbody = document.getElementById('bind_table_body'); 
             tbody.innerHTML = '';
             if(res.data.bindings.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">该端口当前无任何绑定记录</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">该端口当前无任何绑定记录</td></tr>';
             } else {
-                // 表头加上“模式”和“VLAN”显示
                 document.querySelector('#bind_table_body').parentElement.querySelector('thead tr').innerHTML = '<th>IP</th><th>MAC</th><th>所在 VLAN</th><th>模式</th><th>操作</th>';
-                
                 res.data.bindings.forEach(bind => { 
-                    const modeBadge = bind.mode === 'access' ? '<span class="badge bg-secondary">接口级</span>' : '<span class="badge bg-primary">全局级</span>';
+                    const modeBadge = bind.mode === 'access' ? '<span class="badge bg-secondary">接口级</span>' : '<span class="badge bg-primary">全局/接口级</span>';
                     tbody.innerHTML += `
                     <tr>
                         <td>${bind.ip}</td>
                         <td>${bind.mac}</td>
-                        <td>${bind.vlan || '未识别'}</td>
+                        <td>${bind.vlan || '依据端口/全局'}</td>
                         <td>${modeBadge}</td>
                         <td><button class="btn btn-danger btn-sm" onclick="delBinding('${bind.ip}', '${bind.mac}', '${bind.mode}', '${bind.vlan}')">解绑</button></td>
                     </tr>`; 
                 });
             }
         }
-    }
-
-    async function applyPort() {
-        const selectedMode = document.querySelector('input[name="bindMode"]:checked').value;
-        const d = { 
-            interface: document.getElementById('port_name').value, 
-            vlan: document.getElementById('vlan_id').value, 
-            bind_ip: document.getElementById('bind_ip').value, 
-            mac: document.getElementById('bind_mac').value,
-            mode: selectedMode // 把选中的模式传给后端
-        };
-        if(!d.interface || !d.vlan || !d.bind_ip || !d.mac) return alert("请填写完整信息");
-        await apiCall('/bind_port', d); 
-        queryPort();
     }
 
     // 接收 mode 和 vlan 参数
