@@ -193,7 +193,7 @@ def get_port_info():
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
 
-# === 🔥 修改：增加保护逻辑的绑定接口 ===
+# === 升级版：绑定接口 ===
 @app.route('/bind_port', methods=['POST'])
 @login_required
 def bind_port():
@@ -201,24 +201,20 @@ def bind_port():
         d = request.json
         mgr = get_manager(d)
         
-        # 1. 保护检查
         info, _ = mgr.get_port_info(d['interface'])
         desc = info.get('description', '')
-        
         for kw in PROTECTED_KEYWORDS:
             if kw.lower() in desc.lower():
-                return jsonify({
-                    'status': 'error', 
-                    'msg': f"⛔ 拒绝操作！<br>该端口描述为: [ {desc} ]<br>包含保护关键词: '{kw}'。<br>这是关键上联端口，禁止自动化修改！"
-                })
+                return jsonify({'status': 'error', 'msg': f"⛔ 拒绝操作！<br>该端口描述包含保护关键词 '{kw}'。"})
         
-        # 2. 执行操作
-        log = mgr.configure_port_binding(d['interface'], d['vlan'], d['bind_ip'], d['mac'])
+        # 接收并传递 mode 参数
+        mode = d.get('mode', 'access')
+        log = mgr.configure_port_binding(d['interface'], d['vlan'], d['bind_ip'], d['mac'], mode)
         return jsonify({'status': 'success', 'log': log.replace('\n', '<br>')})
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
 
-# === 🔥 修改：增加保护逻辑的解绑接口 ===
+# === 升级版：解绑接口 ===
 @app.route('/del_port_binding', methods=['POST'])
 @login_required
 def del_port_binding():
@@ -226,19 +222,16 @@ def del_port_binding():
         d = request.json
         mgr = get_manager(d)
 
-        # 1. 保护检查
         info, _ = mgr.get_port_info(d['interface'])
         desc = info.get('description', '')
-        
         for kw in PROTECTED_KEYWORDS:
             if kw.lower() in desc.lower():
-                return jsonify({
-                    'status': 'error', 
-                    'msg': f"⛔ 拒绝操作！<br>该端口描述为: [ {desc} ]<br>包含保护关键词: '{kw}'。<br>这是关键上联端口，禁止自动化修改！"
-                })
+                return jsonify({'status': 'error', 'msg': f"⛔ 拒绝操作！<br>该端口描述包含保护关键词 '{kw}'。"})
 
-        # 2. 执行操作
-        log = mgr.delete_port_binding(d['interface'], d['del_ip'], d['del_mac'])
+        # 接收 mode 和 vlan 参数
+        mode = d.get('mode', 'access')
+        vlan = d.get('vlan', '')
+        log = mgr.delete_port_binding(d['interface'], d['del_ip'], d['del_mac'], mode, vlan)
         return jsonify({'status': 'success', 'log': log.replace('\n', '<br>')})
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})

@@ -111,20 +111,45 @@
             <div class="row">
                 <div class="col-md-12 mb-4">
                     <h5>端口配置 (一步法: VLAN + STP + Verify + Binding)</h5>
-                    <div class="row g-3 align-items-end bg-light p-3 rounded border">
-                        <div class="col-md-4">
-                            <label class="form-label">端口选择</label>
-                            <div class="input-group">
-                                <select class="form-select" id="port_name"><option value="" selected>请先点击右侧刷新...</option></select>
-                                <button class="btn btn-secondary" onclick="getInterfaces()">🔄 获取</button>
-                                <button class="btn btn-info text-white" onclick="queryPort()">🔍 查询</button>
+<div class="row g-3 align-items-end bg-light p-3 rounded border">
+                        <div class="col-md-12 mb-2 pb-2 border-bottom">
+                            <label class="form-label fw-bold text-primary">⚙️ 准入策略模式选择 (必选)</label>
+                            <div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="radio" name="bindMode" id="modeAccess" value="access" checked>
+                                    <label class="form-check-label" for="modeAccess"><b>Access 严格模式</b> (公安网/视频网: 接口 ip verify source)</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="radio" name="bindMode" id="modeTrunk" value="trunk">
+                                    <label class="form-check-label" for="modeTrunk"><b>Trunk 混合模式</b> (互联网 AP 口: 全局 binding + VLAN ARP Detection)</label>
+                                </div>
                             </div>
                         </div>
-                        <div class="col-md-2"><label class="form-label">VLAN ID</label><input type="text" class="form-control" id="vlan_id" placeholder="202"></div>
-                        <div class="col-md-3"><label class="form-label">绑定 IP</label><input type="text" class="form-control" id="bind_ip" placeholder="IP"></div>
-                        <div class="col-md-3"><label class="form-label">绑定 MAC</label><div class="input-group"><input type="text" class="form-control" id="bind_mac" placeholder="MAC"><button class="btn btn-success" onclick="applyPort()">绑定</button></div></div>
+
+                        <div class="col-md-3">
+                            <label class="form-label">端口选择</label>
+                            <div class="input-group">
+                                <select class="form-select" id="port_name"><option value="" selected>请先刷新</option></select>
+                                <button class="btn btn-secondary" onclick="getInterfaces()">🔄</button>
+                                <button class="btn btn-info text-white" onclick="queryPort()">🔍查询</button>
+                            </div>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">VLAN ID</label>
+                            <input type="text" class="form-control" id="vlan_id" placeholder="202">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">绑定 IP</label>
+                            <input type="text" class="form-control" id="bind_ip" placeholder="IP">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">绑定 MAC</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="bind_mac" placeholder="MAC">
+                                <button class="btn btn-success" onclick="applyPort()">执行绑定</button>
+                            </div>
+                        </div>
                     </div>
-                </div>
                 <div class="col-md-12">
                     <h5>已绑定设备列表</h5>
                     <table class="table table-bordered table-striped">
@@ -317,25 +342,60 @@
             }
         } else select.innerHTML = '<option value="">❌ 获取失败</option>'; 
     }
-    async function queryPort() {
+async function queryPort() {
         const port = document.getElementById('port_name').value;
         if(!port) return alert("请先获取并选择端口");
         const res = await apiCall('/get_port_info', {interface: port});
         if(res && res.status === 'success') {
             if(res.data.vlan) document.getElementById('vlan_id').value = res.data.vlan;
-            const tbody = document.getElementById('bind_table_body'); tbody.innerHTML = '';
-            if(res.data.bindings.length === 0) tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">该端口当前无 IP Source Guard 绑定</td></tr>';
-            else res.data.bindings.forEach(bind => { tbody.innerHTML += `<tr><td>${bind.ip}</td><td>${bind.mac}</td><td><button class="btn btn-danger btn-sm" onclick="delBinding('${bind.ip}', '${bind.mac}')">解绑</button></td></tr>`; });
+            const tbody = document.getElementById('bind_table_body'); 
+            tbody.innerHTML = '';
+            if(res.data.bindings.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">该端口当前无任何绑定记录</td></tr>';
+            } else {
+                // 表头加上“模式”和“VLAN”显示
+                document.querySelector('#bind_table_body').parentElement.querySelector('thead tr').innerHTML = '<th>IP</th><th>MAC</th><th>所在 VLAN</th><th>模式</th><th>操作</th>';
+                
+                res.data.bindings.forEach(bind => { 
+                    const modeBadge = bind.mode === 'access' ? '<span class="badge bg-secondary">接口级</span>' : '<span class="badge bg-primary">全局级</span>';
+                    tbody.innerHTML += `
+                    <tr>
+                        <td>${bind.ip}</td>
+                        <td>${bind.mac}</td>
+                        <td>${bind.vlan || '未识别'}</td>
+                        <td>${modeBadge}</td>
+                        <td><button class="btn btn-danger btn-sm" onclick="delBinding('${bind.ip}', '${bind.mac}', '${bind.mode}', '${bind.vlan}')">解绑</button></td>
+                    </tr>`; 
+                });
+            }
         }
     }
+
     async function applyPort() {
-        const d = { interface: document.getElementById('port_name').value, vlan: document.getElementById('vlan_id').value, bind_ip: document.getElementById('bind_ip').value, mac: document.getElementById('bind_mac').value };
+        const selectedMode = document.querySelector('input[name="bindMode"]:checked').value;
+        const d = { 
+            interface: document.getElementById('port_name').value, 
+            vlan: document.getElementById('vlan_id').value, 
+            bind_ip: document.getElementById('bind_ip').value, 
+            mac: document.getElementById('bind_mac').value,
+            mode: selectedMode // 把选中的模式传给后端
+        };
         if(!d.interface || !d.vlan || !d.bind_ip || !d.mac) return alert("请填写完整信息");
-        await apiCall('/bind_port', d); queryPort();
+        await apiCall('/bind_port', d); 
+        queryPort();
     }
-    async function delBinding(ip, mac) {
-        if(!confirm(`确定解绑 IP: ${ip} 吗？`)) return;
-        await apiCall('/del_port_binding', { interface: document.getElementById('port_name').value, del_ip: ip, del_mac: mac }); queryPort();
+
+    // 接收 mode 和 vlan 参数
+    async function delBinding(ip, mac, mode, vlan) {
+        if(!confirm(`确定解绑 IP: ${ip} 吗？\n当前模式: ${mode}`)) return;
+        await apiCall('/del_port_binding', { 
+            interface: document.getElementById('port_name').value, 
+            del_ip: ip, 
+            del_mac: mac,
+            mode: mode,
+            vlan: vlan
+        }); 
+        queryPort();
     }
     async function saveConfig() { if(!confirm("确定要执行 save force 吗？")) return; await apiCall('/save_config', {}); alert("保存指令已发送"); }
     async function loadAcl() {

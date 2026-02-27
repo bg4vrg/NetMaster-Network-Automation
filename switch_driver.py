@@ -43,149 +43,179 @@ class H3CManager:
                     
         return f"✅ 连接成功！\n设备名称: {hostname}\n设备型号: {model}"
 
-# === 🛠️ 修复版 get_interface_list (支持名称自动缩写匹配) ===
+# === 🛠️ 终极修复版：获取接口列表 (解决 XGE 描述丢失问题) ===
     def get_interface_list(self):
         conn = self._get_connection()
-        # 获取 brief 信息 (得到 GE1/0/1 这种短名)
         brief_out = conn.send_command("display interface brief")
-        # 获取详细配置信息 (得到 GigabitEthernet1/0/1 这种长名 + description)
         config_out = conn.send_command("display current-configuration interface")
         conn.disconnect()
 
-        # 1. 解析 brief 获取接口名
         interfaces = []
-        lines = brief_out.split('\n')
-        for line in lines:
+        
+        # 1. 解析 brief 获取接口名、状态 (UP/DOWN)、模式 (Access/Trunk)
+        for line in brief_out.split('\n'):
             parts = line.split()
-            if len(parts) > 0:
-                # 兼容 GE, XGE (万兆), MGE (多速率), Bridge-Aggregation (聚合口)
+            if len(parts) >= 5:
                 name = parts[0]
-                if name.startswith(('GE', 'XGE', 'Gigabit', 'MGE', 'Bridge')):
-                    interfaces.append({'name': name, 'desc': ''})
+                if name.startswith(('GE', 'XGE', 'Gigabit', 'MGE', 'Bridge', 'Ten-Gigabit', 'XGigabit')):
+                    # 🔥 修复：先替换长的 (Ten-GigabitEthernet)，再替换短的 (GigabitEthernet)
+                    short_name = name.replace('Ten-GigabitEthernet', 'XGE')\
+                                     .replace('XGigabitEthernet', 'XGE')\
+                                     .replace('M-GigabitEthernet', 'MGE')\
+                                     .replace('GigabitEthernet', 'GE')\
+                                     .replace('Bridge-Aggregation', 'BAGG')
+                    
+                    link_status = parts[1] 
+                    port_type_raw = parts[4] 
+                    port_type = "Access" if port_type_raw == 'A' else "Trunk" if port_type_raw == 'T' else "Hybrid" if port_type_raw == 'H' else port_type_raw
+                    
+                    interfaces.append({
+                        'name': short_name, 
+                        'desc': '', 
+                        'link': link_status, 
+                        'type': port_type
+                    })
         
         # 2. 解析 config 获取 description
         current_iface = None
         for line in config_out.split('\n'):
             line = line.strip()
             if line.startswith('interface '):
-                # 拿到长名: GigabitEthernet1/0/31
                 full_name = line.split(' ')[1]
-                
-                # 🔄 核心修复：把长名“翻译”成短名，以便和 brief 列表匹配
-                current_iface = full_name.replace('GigabitEthernet', 'GE')\
-                                         .replace('Ten-GigabitEthernet', 'XGE')\
+                # 🔥 修复：保持正确的替换顺序
+                current_iface = full_name.replace('Ten-GigabitEthernet', 'XGE')\
+                                         .replace('XGigabitEthernet', 'XGE')\
                                          .replace('M-GigabitEthernet', 'MGE')\
+                                         .replace('GigabitEthernet', 'GE')\
                                          .replace('Bridge-Aggregation', 'BAGG')
-                                         
             elif line.startswith('description ') and current_iface:
-                # 提取描述内容
                 desc_text = line.replace('description ', '').strip()
-                
-                # 在列表里找这个接口，找到了就更新描述
                 for iface in interfaces:
-                    # 现在的 current_iface 已经是 GE1/0/31 了，可以匹配上了
                     if iface['name'] == current_iface:
                         iface['desc'] = desc_text
                         break
         
-        # 3. 格式化输出 (前端下拉框使用)
+        # 3. 格式化输出
         result = []
         for iface in interfaces:
-            display_text = iface['name']
+            display_text = f"[{iface['link']}] [{iface['type']}] {iface['name']}"
             if iface['desc']:
-                display_text += f" ({iface['desc']})"  # 效果: GE1/0/31 (link-202.16)
+                display_text += f" ({iface['desc']})"
             result.append({'value': iface['name'], 'text': display_text})
             
         return result
 
-# === 🛠️ 修复版 get_port_info ===
+    # === 🛠️ 终极修复版：获取端口详情 (同步更新替换顺序) ===
     def get_port_info(self, interface_name):
         conn = self._get_connection()
-        # 优先使用 display current-configuration，因为它格式最全
-        cmds = [
-            f"display current-configuration interface {interface_name}",
-        ]
-        output = ""
-        try:
-            for cmd in cmds:
-                output = conn.send_command(cmd)
-                if "interface" in output: break 
-        except Exception as e:
-            # 如果出错，至少把 output 返回去方便调试
-            pass
-        finally:
-            conn.disconnect()
+        output_iface = conn.send_command(f"display current-configuration interface {interface_name}")
+        output_global = conn.send_command("display ip source binding")
+        conn.disconnect()
 
-        # === 开始解析 ===
         vlan = ""
         description = ""
         bindings = []
 
-        for line in output.split('\n'):
-            line = line.strip() # 去除首尾空格
-
-            # 1. 解析 VLAN
-            # 兼容: "port access vlan 202"
+        # 1. 解析接口配置
+        for line in output_iface.split('\n'):
+            line = line.strip()
             if line.startswith('port access vlan'):
                 parts = line.split()
-                # parts 通常是 ['port', 'access', 'vlan', '202']
-                if len(parts) >= 4:
-                    vlan = parts[3]
-
-            # 2. 解析 Description (描述)
-            # 兼容: "description link-202.16"
-            if line.startswith('description'):
-                # 使用 split(maxsplit=1) 确保只切分第一个空格
+                if len(parts) >= 4: vlan = parts[3]
+            elif line.startswith('port trunk pvid vlan'):
+                parts = line.split()
+                if len(parts) >= 5: vlan = parts[4]
+                
+            elif line.startswith('description'):
                 parts = line.split(maxsplit=1)
-                if len(parts) > 1:
-                    description = parts[1].strip()
-
-            # 3. 解析绑定信息 (核心修复点)
-            # 你的设备输出: ip source binding ...
-            # 旧版本设备输出: ip-source binding ...
-            # 修复：只要行里同时包含 'source binding' 和 'ip-address' 就认为是绑定行
+                if len(parts) > 1: description = parts[1].strip()
+            
+            # Access 模式
             if 'source binding' in line and 'ip-address' in line:
-                # 使用正则提取，兼容中间有多个空格的情况 (\s+)
                 ip_match = re.search(r'ip-address\s+([\d\.]+)', line)
                 mac_match = re.search(r'mac-address\s+([\w\-\.]+)', line)
-                
                 if ip_match and mac_match:
                     bindings.append({
                         'ip': ip_match.group(1), 
-                        'mac': self.format_mac(mac_match.group(1))
+                        'mac': self.format_mac(mac_match.group(1)),
+                        'mode': 'access',
+                        'vlan': vlan
                     })
-        
-        return {
-            'vlan': vlan, 
-            'bindings': bindings, 
-            'description': description
-        }, output
 
-# === 🛠️ 修复版：写入绑定 (去掉 ip-source 中的短横线) ===
-    def configure_port_binding(self, interface_name, vlan_id, bind_ip, bind_mac):
-        cmds = [
-            f"interface {interface_name}",
-            "stp edged-port",
-            f"port access vlan {vlan_id}",
-            "ip verify source ip-address mac-address",
-            # 修改点：ip-source -> ip source
-            f"ip source binding ip-address {bind_ip} mac-address {self.format_mac(bind_mac)}"
-        ]
-        
+        # 2. 解析全局配置
+        # 🔥 修复：同步使用正确的替换顺序
+        target_iface_short = interface_name.replace('Ten-GigabitEthernet', 'XGE')\
+                                           .replace('XGigabitEthernet', 'XGE')\
+                                           .replace('M-GigabitEthernet', 'MGE')\
+                                           .replace('GigabitEthernet', 'GE')
+
+        for line in output_global.split('\n'):
+            if 'Static' in line:
+                parts = line.split()
+                port_col = next((p for p in parts if p.startswith(('GE', 'XG', 'Gi', 'Te', 'BA'))), "")
+                
+                # 🔥 修复：同步使用正确的替换顺序
+                port_col_short = port_col.replace('Ten-GigabitEthernet', 'XGE')\
+                                         .replace('XGigabitEthernet', 'XGE')\
+                                         .replace('M-GigabitEthernet', 'MGE')\
+                                         .replace('GigabitEthernet', 'GE')
+                
+                if port_col_short == target_iface_short:
+                    ip_val = next((p for p in parts if p.count('.') == 3), "Unknown")
+                    mac_val = next((p for p in parts if '-' in p and len(p) >= 12), "Unknown")
+                    vlan_val = next((p for p in parts if p.isdigit() and len(p) <= 4), "Unknown")
+                    
+                    if ip_val != "Unknown" and mac_val != "Unknown":
+                        if not any(b['ip'] == ip_val for b in bindings):
+                            bindings.append({
+                                'ip': ip_val,
+                                'mac': self.format_mac(mac_val),
+                                'mode': 'trunk',
+                                'vlan': vlan_val
+                            })
+
+        return {'vlan': vlan, 'bindings': bindings, 'description': description}, output_iface + "\n\n[Global Bindings]\n" + output_global
+		
+    # === 🛠️ 升级版：配置绑定（根据模式下发不同命令） ===
+    def configure_port_binding(self, interface_name, vlan_id, bind_ip, bind_mac, mode="access"):
         conn = self._get_connection()
+        if mode == "access":
+            cmds = [
+                f"interface {interface_name}",
+                "stp edged-port",
+                f"port access vlan {vlan_id}",
+                "ip verify source ip-address mac-address",
+                f"ip source binding ip-address {bind_ip} mac-address {self.format_mac(bind_mac)}"
+            ]
+        else: # trunk 模式 (全局绑定 + VLAN ARP 检测)
+            cmds = [
+                # 1. 全局绑定 (退出接口视图)
+                "quit",
+                f"ip source binding ip-address {bind_ip} mac-address {self.format_mac(bind_mac)} interface {interface_name} vlan {vlan_id}",
+                # 2. 开启对应 VLAN 的 arp detection
+                f"vlan {vlan_id}",
+                "arp detection enable"
+            ]
+            
         output = conn.send_config_set(cmds)
         conn.save_config()
         conn.disconnect()
         return output
 
-    # === 🛠️ 修复版：解除绑定 (去掉 ip-source 中的短横线) ===
-    def delete_port_binding(self, interface_name, del_ip, del_mac):
-        cmds = [
-            f"interface {interface_name}",
-            # 修改点：undo ip-source -> undo ip source
-            f"undo ip source binding ip-address {del_ip} mac-address {self.format_mac(del_mac)}"
-        ]
+    # === 🛠️ 升级版：删除绑定（根据模式执行不同的 undo） ===
+    def delete_port_binding(self, interface_name, del_ip, del_mac, mode="access", vlan_id=None):
         conn = self._get_connection()
+        if mode == "access":
+            cmds = [
+                f"interface {interface_name}",
+                f"undo ip source binding ip-address {del_ip} mac-address {self.format_mac(del_mac)}"
+            ]
+        else: # trunk 模式解绑必须带上 interface 和 vlan
+            cmds = [
+                "quit",
+                f"undo ip source binding ip-address {del_ip} mac-address {self.format_mac(del_mac)} interface {interface_name} vlan {vlan_id}"
+            ]
+            
         output = conn.send_config_set(cmds)
         conn.save_config()
         conn.disconnect()
