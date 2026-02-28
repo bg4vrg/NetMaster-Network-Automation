@@ -105,6 +105,17 @@ def change_pass_api():
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
 
+# ===开放数据接口提供给前端网页调用===
+@app.route('/api/audit_logs', methods=['GET'])
+@login_required
+def api_audit_logs():
+    try:
+        # 默认拉取最新的 100 条记录
+        logs = db.get_audit_logs(limit=100)
+        return jsonify({'status': 'success', 'data': logs})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
+
 # === 批量备份功能 ===
 @app.route('/batch_backup', methods=['POST'])
 @login_required
@@ -193,47 +204,66 @@ def get_port_info():
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
 
-# === 升级版：绑定接口 ===
+# === 升级版：绑定接口 (带审计日志) ===
 @app.route('/bind_port', methods=['POST'])
 @login_required
 def bind_port():
+    d = request.json
+    client_ip = request.remote_addr
+    device_ip = d.get('ip', 'Unknown')
+    mode = d.get('mode', 'access')
+    details = f"端口:{d.get('interface')} | IP:{d.get('bind_ip')} | MAC:{d.get('mac')} | 模式:{mode} | VLAN:{d.get('vlan')}"
+
     try:
-        d = request.json
         mgr = get_manager(d)
         
         info, _ = mgr.get_port_info(d['interface'])
         desc = info.get('description', '')
         for kw in PROTECTED_KEYWORDS:
             if kw.lower() in desc.lower():
+                # 记录越权操作失败
+                db.log_operation(current_user.username, client_ip, device_ip, "端口绑定", f"{details} | 触发保护端口拦截", "失败")
                 return jsonify({'status': 'error', 'msg': f"⛔ 拒绝操作！<br>该端口描述包含保护关键词 '{kw}'。"})
         
-        # 接收并传递 mode 参数
-        mode = d.get('mode', 'access')
         log = mgr.configure_port_binding(d['interface'], d['vlan'], d['bind_ip'], d['mac'], mode)
+        
+        # 🔥 记录成功日志
+        db.log_operation(current_user.username, client_ip, device_ip, "端口绑定", details, "成功")
         return jsonify({'status': 'success', 'log': log.replace('\n', '<br>')})
     except Exception as e:
+        # 🔥 记录失败日志
+        db.log_operation(current_user.username, client_ip, device_ip, "端口绑定", f"{details} | 报错: {str(e)}", "失败")
         return jsonify({'status': 'error', 'msg': str(e)})
 
-# === 升级版：解绑接口 ===
+# === 升级版：解绑接口 (带审计日志) ===
 @app.route('/del_port_binding', methods=['POST'])
 @login_required
 def del_port_binding():
+    d = request.json
+    client_ip = request.remote_addr
+    device_ip = d.get('ip', 'Unknown')
+    mode = d.get('mode', 'access')
+    vlan = d.get('vlan', '')
+    details = f"端口:{d.get('interface')} | IP:{d.get('del_ip')} | MAC:{d.get('del_mac')} | 模式:{mode} | VLAN:{vlan}"
+
     try:
-        d = request.json
         mgr = get_manager(d)
 
         info, _ = mgr.get_port_info(d['interface'])
         desc = info.get('description', '')
         for kw in PROTECTED_KEYWORDS:
             if kw.lower() in desc.lower():
+                db.log_operation(current_user.username, client_ip, device_ip, "解除绑定", f"{details} | 触发保护端口拦截", "失败")
                 return jsonify({'status': 'error', 'msg': f"⛔ 拒绝操作！<br>该端口描述包含保护关键词 '{kw}'。"})
 
-        # 接收 mode 和 vlan 参数
-        mode = d.get('mode', 'access')
-        vlan = d.get('vlan', '')
         log = mgr.delete_port_binding(d['interface'], d['del_ip'], d['del_mac'], mode, vlan)
+        
+        # 🔥 记录成功日志
+        db.log_operation(current_user.username, client_ip, device_ip, "解除绑定", details, "成功")
         return jsonify({'status': 'success', 'log': log.replace('\n', '<br>')})
     except Exception as e:
+        # 🔥 记录失败日志
+        db.log_operation(current_user.username, client_ip, device_ip, "解除绑定", f"{details} | 报错: {str(e)}", "失败")
         return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/get_acl', methods=['POST'])
@@ -273,11 +303,16 @@ def del_acl():
 @app.route('/save_config', methods=['POST'])
 @login_required
 def save_config():
+    client_ip = request.remote_addr
+    device_ip = request.json.get('ip', 'Unknown')
     try:
         mgr = get_manager(request.json)
         log = mgr.save_config_to_device()
+        
+        db.log_operation(current_user.username, client_ip, device_ip, "保存配置", "执行 save force", "成功")
         return jsonify({'status': 'success', 'log': log.replace('\n', '<br>')})
     except Exception as e:
+        db.log_operation(current_user.username, client_ip, device_ip, "保存配置", f"报错: {str(e)}", "失败")
         return jsonify({'status': 'error', 'msg': str(e)})
 
 if __name__ == '__main__':

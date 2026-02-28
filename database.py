@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import datetime  # 新增这一行，用于获取当前时间
 from werkzeug.security import generate_password_hash, check_password_hash
 
 DB_NAME = 'net_assets.db'
@@ -11,7 +12,6 @@ def get_db():
 
 def init_db():
     """初始化数据库：创建表和默认管理员"""
-    # 即使文件存在，也检查一下表是否存在，防止报错
     conn = get_db()
     c = conn.cursor()
     
@@ -31,9 +31,19 @@ def init_db():
                   password TEXT,
                   model TEXT,
                   note TEXT)''')
+
+    # 🔥 3. 新增：创建操作审计日志表 (加入了 username 字段)
+    c.execute('''CREATE TABLE IF NOT EXISTS audit_logs
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  timestamp TEXT NOT NULL,
+                  username TEXT NOT NULL,
+                  client_ip TEXT NOT NULL,
+                  device_ip TEXT NOT NULL,
+                  action TEXT NOT NULL,
+                  details TEXT,
+                  status TEXT NOT NULL)''')
     
-    # 3. 创建默认管理员账号: admin / admin888
-    # 注意：这里存的是加密后的哈希值，不是明文，非常安全
+    # 4. 创建默认管理员账号: admin / admin888
     default_user = 'admin'
     default_pass = 'admin888'
     
@@ -46,6 +56,21 @@ def init_db():
     
     conn.commit()
     conn.close()
+
+# === 🔥 新增：写入审计日志的通用函数 ===
+def log_operation(username, client_ip, device_ip, action, details, status):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cur.execute('''
+            INSERT INTO audit_logs (timestamp, username, client_ip, device_ip, action, details, status) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (timestamp, username, client_ip, device_ip, action, details, status))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"写入审计日志失败: {e}")
 
 # === 用户管理 ===
 def get_user_by_id(user_id):
@@ -100,3 +125,13 @@ def delete_switch(switch_id):
 
 # 每次被引用时尝试初始化，确保表存在
 init_db()
+
+# === 操作审计日志管理 ===
+def get_audit_logs(limit=100):
+    conn = get_db()
+    cur = conn.cursor()
+    # 按 ID 倒序排列，最新的操作显示在最前面
+    cur.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?", (limit,))
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]

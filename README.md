@@ -1,12 +1,19 @@
-# H3C Switch Admin Tool v2.3.0
+# H3C Switch Admin Tool v2.3.1
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
 ![License](https://img.shields.io/badge/License-GPLv3-green)
-![Version](https://img.shields.io/badge/Version-v2.3.0-orange)
+![Version](https://img.shields.io/badge/Version-v2.3.1-orange)
 
 
 基于 Python 3.11 + Flask + Netmiko 开发的企业级 H3C 交换机 Web 运维平台。
-本项目致力于在**零额外硬件成本**的前提下，充分挖掘交换机底层安全特性，从早期的单一脚本工具不断进化为集成了 **资产管理**、**安全登录** 、**ACL 极简管理**和 **批量自动化备份** 的综合运维系统，实现堪比商业 NAC（网络准入控制）系统的安全管控能力。
+本项目致力于在**零额外硬件成本**的前提下，充分挖掘交换机底层安全特性，从早期的单一脚本工具不断进化为集成了 **资产管理**、**安全登录** 、**ACL 极简管理**和 **批量自动化备份**、**日志审计**的综合运维系统，实现堪比商业 NAC（网络准入控制）系统的安全管控能力。
+
+### 🚀 v2.3.1 UI/UX: 审计日志交互重构，主界面极致瘦身
+
+✨ 交互体验升级：
+1. 空间释放：将原本占用主界面的『系统操作审计日志』大屏模块，重构为顶部导航栏的全局弹窗 (Modal) 触发。彻底清爽化主配置区，消除视觉干扰。
+2. 沉浸式阅读：日志弹窗采用 XL 超大尺寸与自适应滚动条，配合状态徽章 (Badge) 渲染，提供类似专业级 SIEM 系统的沉浸式溯源体验。
+3. 性能优化：取消网页初始化 (DOMContentLoaded) 时的日志自动全量拉取，改为『点击按钮时按需加载 (Lazy Load)』，大幅提升页面首屏渲染速度与降低后端初始化压力。
 
 ### 🚀 v2.3.0最新重大更新
 
@@ -127,4 +134,8 @@ H3C-Switch-Admin-Tool/
 
 ### 5. 操作时增加进度条
 
-![image-20260227191408003](./screenshots/jindutiao.png)
+*![操作进度条](./screenshots/jindutiao.png)*
+
+### 6. 增加日志审计模块
+
+*![日志审计](./screenshots/log.png)*
