@@ -1,12 +1,21 @@
-# H3C Switch Admin Tool v2.3.1
+# H3C Switch Admin Tool v2.3.2
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
 ![License](https://img.shields.io/badge/License-GPLv3-green)
-![Version](https://img.shields.io/badge/Version-v2.3.1-orange)
+![Version](https://img.shields.io/badge/Version-v2.3.2-orange)
 
 
 基于 Python 3.11 + Flask + Netmiko 开发的企业级 H3C 交换机 Web 运维平台。
 本项目致力于在**零额外硬件成本**的前提下，充分挖掘交换机底层安全特性，从早期的单一脚本工具不断进化为集成了 **资产管理**、**安全登录** 、**ACL 极简管理**和 **批量自动化备份**、**日志审计**的综合运维系统，实现堪比商业 NAC（网络准入控制）系统的安全管控能力。
+
+### 🚀 v2.3.2 引入 APScheduler 实现凌晨无人值守自动备份 
+
+✨ 核心新特性：
+1. 任务调度底层：成功集成轻量级调度框架 APScheduler，为系统赋予了后台并发与定时任务处理能力。
+2. 幽灵备份任务：设定每天凌晨 2:00 触发静默巡检，自动遍历全网设备拉取最新配置，并按日期分类归档，实现 100% 无人值守灾备。
+3. 审计日志联动：调度引擎执行完毕后，自动将汇总战报（包含成功/失败数、存储路径）以『System(系统)』身份写入操作审计日志，形成闭环。
+4. 依赖升级：更新 requirements.txt，纳入 APScheduler 及相关时区依赖包。
+
 
 ### 🚀 v2.3.1 UI/UX: 审计日志交互重构，主界面极致瘦身
 
@@ -139,3 +148,8 @@ H3C-Switch-Admin-Tool/
 ### 6. 增加日志审计模块
 
 *![日志审计](./screenshots/log.png)*
+
+### 7. 增加交换机配置自动备份模块
+
+*![配置自动备份](./screenshots/autobackup.png.png)*
+

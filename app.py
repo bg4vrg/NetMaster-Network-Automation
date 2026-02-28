@@ -1,3 +1,4 @@
+from apscheduler.schedulers.background import BackgroundScheduler
 import os
 import datetime
 from flask import Flask, render_template, request, jsonify, redirect, url_for
@@ -314,6 +315,56 @@ def save_config():
     except Exception as e:
         db.log_operation(current_user.username, client_ip, device_ip, "保存配置", f"报错: {str(e)}", "失败")
         return jsonify({'status': 'error', 'msg': str(e)})
+
+# === ⏰ 凌晨幽灵：定时自动备份任务 ===
+def auto_backup_task():
+    print(f"\n🌙 [{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [系统调度] 开始执行凌晨自动备份...")
+    switches = db.get_all_switches()
+    if not switches:
+        print("🌙 [系统调度] 数据库中没有设备，跳过备份。")
+        return
+
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    today_dir = os.path.join(BACKUP_ROOT, today)
+    if not os.path.exists(today_dir):
+        os.makedirs(today_dir)
+
+    success_count = 0
+    fail_count = 0
+
+    for sw in switches:
+        safe_name = sw['name'].replace('/', '_').replace('\\', '_').replace(' ', '_')
+        target_ip = sw['ip']
+        try:
+            mgr = H3CManager(target_ip, sw['username'], sw['password'], sw['port'])
+            config_text = mgr.get_full_config()
+            filename = f"{safe_name}_{target_ip}.cfg"
+            filepath = os.path.join(today_dir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(config_text)
+            success_count += 1
+            print(f"  ✅ {target_ip} 备份成功")
+        except Exception as e:
+            fail_count += 1
+            print(f"  ❌ {target_ip} 备份失败: {e}")
+
+    # 🔥 核心联动：记录到我们刚写好的审计日志中！(操作人写死为 System)
+    details = f"任务结束。共 {len(switches)} 台。成功: {success_count}, 失败: {fail_count}。路径: {today_dir}"
+    status = "成功" if fail_count == 0 else ("部分失败" if success_count > 0 else "全部失败")
+    db.log_operation("System(系统)", "Localhost", "ALL_SWITCHES", "定时自动备份", details, status)
+    print(f"🌙 [系统调度] 备份任务执行完毕！{details}\n")
+
+
+# 🚀 初始化并启动后台调度器
+scheduler = BackgroundScheduler(timezone="Asia/Shanghai") # 强制指定中国时区，防止服务器时间乱套
+
+# 设定每天凌晨 2:00 准时执行备份任务
+scheduler.add_job(func=auto_backup_task, trigger="cron", hour=02, minute=00)
+
+scheduler.start()
+# ============================================
+
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=True)
