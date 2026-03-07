@@ -279,13 +279,31 @@
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header"><h5 class="modal-title">管理设备列表</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-            <div class="modal-body">
+<div class="modal-body">
+                <div class="card bg-light p-3 mb-3 border-0 border-start border-success border-4 shadow-sm">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="card-subtitle text-success fw-bold mb-0"><i class="bi bi-file-earmark-excel"></i> 批量导入设备 (Excel)</h6>
+                        <a href="#" onclick="alert('请自建一个 Excel 文件，包含以下 6 列确切的表头：\n\n设备名称 | IP地址 | 端口 | 用户名 | 密码 | 厂商\n\n💡 厂商字段目前请填写：h3c 或 huawei')" class="text-decoration-none text-muted" style="font-size: 0.85rem;"><i class="bi bi-question-circle"></i> 查看模板格式</a>
+                    </div>
+                    <div class="input-group input-group-sm">
+                        <input type="file" class="form-control" id="asset_excel_file" accept=".xlsx, .xls">
+                        <button class="btn btn-success" onclick="importSwitchesExcel()">开始导入</button>
+                    </div>
+                </div>
+
                 <div class="card bg-light p-3 mb-3 border-0">
-                    <h6 class="card-subtitle mb-2 text-primary fw-bold">添加新设备</h6>
+                    <h6 class="card-subtitle mb-2 text-primary fw-bold">手动添加新设备</h6>
                     <div class="row g-2 mb-2">
-                        <div class="col-md-4"><input type="text" class="form-control form-control-sm" id="new_name" placeholder="备注名称"></div>
-                        <div class="col-md-5"><input type="text" class="form-control form-control-sm" id="new_ip" placeholder="IP 地址"></div>
-                        <div class="col-md-3"><div class="input-group input-group-sm"><span class="input-group-text">端口</span><input type="number" class="form-control" id="new_port" value="22" placeholder="22"></div></div>
+                        <div class="col-md-3"><input type="text" class="form-control form-control-sm" id="new_name" placeholder="备注名称"></div>
+                        <div class="col-md-3">
+                            <select class="form-select form-select-sm" id="new_vendor">
+                                <option value="h3c" selected>H3C (华三)</option>
+                                <option value="huawei">Huawei (华为)</option>
+                                <option value="ruijie">Ruijie (锐捷)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4"><input type="text" class="form-control form-control-sm" id="new_ip" placeholder="IP 地址"></div>
+                        <div class="col-md-2"><div class="input-group input-group-sm"><span class="input-group-text">端口</span><input type="number" class="form-control" id="new_port" value="22"></div></div>
                     </div>
                     <div class="row g-2">
                         <div class="col-md-5"><input type="text" class="form-control form-control-sm" id="new_user" value="admin" placeholder="用户名"></div>
@@ -293,9 +311,10 @@
                         <div class="col-md-2"><button class="btn btn-primary btn-sm w-100" onclick="addSwitch()">➕ 添加</button></div>
                     </div>
                 </div>
-                <div class="table-responsive">
-                    <table class="table table-hover table-bordered align-middle text-center">
-                        <thead class="table-light"><tr><th>备注名</th><th>地址 (IP:Port)</th><th>用户名</th><th>操作</th></tr></thead>
+                
+                <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                    <table class="table table-hover table-bordered align-middle text-center table-sm" style="font-size: 0.9rem;">
+                        <thead class="table-light sticky-top"><tr><th>备注名</th><th>厂商</th><th>地址 (IP:Port)</th><th>用户名</th><th>操作</th></tr></thead>
                         <tbody id="switch_list_body"></tbody>
                     </table>
                 </div>
@@ -512,51 +531,88 @@
         }
     }
 
-    // === 资产管理 ===
+// === 资产管理 (带自动排序与品牌着色) ===
     async function loadSwitches() {
         const response = await fetch('/api/switches');
         if (response.redirected) { window.location.href = response.url; return; }
         const result = await response.json();
-        switchData = result.data;
+        
+        // 💡 修复：利用 localeCompare 对设备名称进行自然排序（支持中文拼音和字母）
+        switchData = result.data.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+        
         const select = document.getElementById('saved_switches');
         const tbody = document.getElementById('switch_list_body');
         
         select.innerHTML = '<option value="">-- 请选择设备或手动输入 --</option>';
-        switchData.forEach((sw, index) => {
-            select.innerHTML += `<option value="${index}">[${sw.name}] ${sw.ip}</option>`;
-        });
-        
         tbody.innerHTML = '';
-        switchData.forEach(sw => {
-            tbody.innerHTML += `<tr><td>${sw.name}</td><td>${sw.ip}:${sw.port}</td><td>${sw.username}</td><td><button class="btn btn-danger btn-sm" onclick="delSwitch(${sw.id})">删除</button></td></tr>`;
+        
+        switchData.forEach((sw, index) => {
+            const vendorTag = sw.vendor ? sw.vendor.toUpperCase() : 'H3C';
+            
+            // 下拉框按照 [厂商] 名称 - IP 的格式渲染，顺序已经是排序好的了
+            select.innerHTML += `<option value="${index}">[${vendorTag}] ${sw.name} - ${sw.ip}</option>`;
+            
+            // 💡 修复：根据品牌动态赋予专属颜色
+            let badgeClass = 'bg-secondary';
+            if (sw.vendor === 'h3c') badgeClass = 'bg-primary';            // H3C: 经典蓝
+            if (sw.vendor === 'huawei') badgeClass = 'bg-danger';          // 华为: 经典红
+            if (sw.vendor === 'ruijie') badgeClass = 'bg-info text-dark';  // 锐捷: 青蓝色
+            
+            tbody.innerHTML += `
+                <tr>
+                    <td>${sw.name}</td>
+                    <td><span class="badge ${badgeClass}">${vendorTag}</span></td>
+                    <td>${sw.ip}:${sw.port}</td>
+                    <td>${sw.username}</td>
+                    <td><button class="btn btn-outline-danger btn-sm" onclick="delSwitch(${sw.id})"><i class="bi bi-trash"></i></button></td>
+                </tr>`;
         });
-    }
-
-    function fillSwitchInfo() {
-        const index = document.getElementById('saved_switches').value;
-        if (index === "") return;
-        const sw = switchData[index];
-        document.getElementById('sw_ip').value = sw.ip;
-        document.getElementById('sw_port').value = sw.port;
-        document.getElementById('sw_user').value = sw.username;
-        document.getElementById('sw_pass').value = sw.password;
     }
 
     async function addSwitch() {
         const d = {
             name: document.getElementById('new_name').value,
+            vendor: document.getElementById('new_vendor').value, // 新增厂商采集
             ip: document.getElementById('new_ip').value,
             port: document.getElementById('new_port').value,
             user: document.getElementById('new_user').value,
             pass: document.getElementById('new_pass').value
         };
         if(!d.ip || !d.pass) return alert("IP 和 密码必填");
-        const res = await apiCall('/api/switches/add', d, "Adding new switch to database");
+        const res = await apiCall('/api/switches/add', d, "正在添加新设备到数据库...");
         if (res && res.status === 'success') {
             loadSwitches();
             document.getElementById('new_name').value = '';
             document.getElementById('new_ip').value = '';
             document.getElementById('new_pass').value = '';
+        }
+    }
+
+    // === 新增：批量导入资产 Excel ===
+    async function importSwitchesExcel() {
+        const fileInput = document.getElementById('asset_excel_file');
+        if (!fileInput.files.length) return alert("请先选择资产 Excel 文件！");
+        
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        
+        startProgress("正在解析并导入设备资产...");
+        try {
+            const response = await fetch('/api/switches/batch_import', { method: 'POST', body: formData });
+            const result = await response.json();
+            finishProgress();
+            
+            if (result.status === 'success') {
+                alert("🎉 " + result.msg);
+                loadSwitches(); // 重新加载表格
+                fileInput.value = ''; // 清空文件选择框
+            } else {
+                alert("❌ 导入失败：" + result.msg);
+            }
+        } catch (error) {
+            console.error(error);
+            finishProgress();
+            alert("网络请求失败！");
         }
     }
 

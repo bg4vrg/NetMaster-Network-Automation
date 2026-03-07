@@ -77,15 +77,81 @@ def list_switches():
     switches = db.get_all_switches()
     return jsonify({'status': 'success', 'data': switches})
 
+# === 📡 资产管理：单台添加设备 (带重复IP校验) ===
 @app.route('/api/switches/add', methods=['POST'])
 @login_required
-def add_switch_api():
-    d = request.json
+def api_add_switch():
     try:
-        db.add_switch(d['name'], d['ip'], int(d.get('port',22)), d['user'], d['pass'], d.get('note',''))
+        data = request.json
+        # 🛡️ 校验重复 IP
+        existing = db.get_all_switches()
+        if any(s['ip'] == data['ip'] for s in existing):
+            return jsonify({'status': 'error', 'msg': f"添加失败：IP 地址 {data['ip']} 已存在，请勿重复录入！"})
+        
+        vendor = data.get('vendor', 'h3c').lower()
+        db.add_switch(data['name'], data['ip'], data['port'], data['user'], data['pass'], vendor)
         return jsonify({'status': 'success'})
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
+
+# === 📂 资产管理：Excel 批量导入设备接口 (带重复IP跳过机制) ===
+@app.route('/api/switches/batch_import', methods=['POST'])
+@login_required
+def batch_import_switches():
+    if 'file' not in request.files:
+        return jsonify({'status': 'error', 'msg': '未找到文件'})
+    file = request.files['file']
+    
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(file, data_only=True)
+        sheet = wb.active
+        headers = [str(cell.value).strip() if cell.value is not None else "" for cell in sheet[1]]
+        
+        required_cols = ['设备名称', 'IP地址', '端口', '用户名', '密码', '厂商']
+        col_indices = {}
+        for req in required_cols:
+            if req in headers:
+                col_indices[req] = headers.index(req)
+            else:
+                return jsonify({'status': 'error', 'msg': f"资产表格缺少必填列头：【{req}】"})
+
+        # 🛡️ 获取当前数据库里所有的 IP 集合，用于排重
+        existing_switches = db.get_all_switches()
+        existing_ips = {s['ip'] for s in existing_switches}
+
+        success_count = 0
+        skip_count = 0 # 记录跳过的重复设备数
+
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            ip = row[col_indices['IP地址']]
+            if not ip: continue
+            ip = str(ip).strip()
+            
+            # 🛡️ 如果 IP 已经存在，直接跳过这一行，不报错打断进程
+            if ip in existing_ips:
+                skip_count += 1
+                continue
+
+            name = str(row[col_indices['设备名称']] or f"Switch_{ip}").strip()
+            port = int(row[col_indices['端口']] or 22)
+            user = str(row[col_indices['用户名']]).strip()
+            pwd = str(row[col_indices['密码']]).strip()
+            vendor = str(row[col_indices['厂商']] or 'h3c').strip().lower()
+
+            db.add_switch(name, ip, port, user, pwd, vendor)
+            
+            # 🛡️ 将新加入的 IP 录入集合，防止 Excel 内部有两行一模一样的重复 IP
+            existing_ips.add(ip) 
+            success_count += 1
+            
+        msg = f"成功导入 {success_count} 台设备！"
+        if skip_count > 0:
+            msg += f" (自动拦截并跳过了 {skip_count} 条重复的 IP)"
+            
+        return jsonify({'status': 'success', 'msg': msg})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': f"导入失败: {str(e)}"})
 
 @app.route('/api/switches/delete', methods=['POST'])
 @login_required

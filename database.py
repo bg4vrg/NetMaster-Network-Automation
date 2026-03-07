@@ -57,6 +57,28 @@ def init_db():
     conn.commit()
     conn.close()
 
+def init_db():
+    # ... (你原来的 init_db 代码) ...
+    pass
+
+# === 🚀 数据库平滑热升级 ===
+def upgrade_db():
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        # 尝试给现有的 switches 表增加 vendor 字段，默认值为 'h3c'
+        cur.execute("ALTER TABLE switches ADD COLUMN vendor TEXT DEFAULT 'h3c'")
+        conn.commit()
+        print("🚀 数据库升级成功：已成功添加 vendor(厂商) 字段！")
+    except Exception as e:
+        # 如果字段已经存在，会抛出异常，直接忽略即可
+        pass
+    conn.close()
+
+# 确保在文件最末尾依次调用它们
+init_db()
+upgrade_db()
+
 # === 🔥 新增：写入审计日志的通用函数 ===
 def log_operation(username, client_ip, device_ip, action, details, status):
     try:
@@ -108,11 +130,12 @@ def get_all_switches():
     conn.close()
     return [dict(row) for row in rows]
 
-def add_switch(name, ip, port, username, password, note=""):
+def add_switch(name, ip, port, username, password, vendor='h3c'):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("INSERT INTO switches (name, ip, port, username, password, note) VALUES (?, ?, ?, ?, ?, ?)",
-                (name, ip, port, username, password, note))
+    # 插入时带上 vendor
+    cur.execute("INSERT INTO switches (name, ip, port, username, password, vendor) VALUES (?, ?, ?, ?, ?, ?)",
+                (name, ip, port, username, password, vendor))
     conn.commit()
     conn.close()
 

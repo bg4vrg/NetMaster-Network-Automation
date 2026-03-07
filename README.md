@@ -1,166 +1,115 @@
-# H3C Switch Admin Tool v2.4.0
+# 🛡️ 极简网管平台：交换机自动化配置系统 (v2.4.1 企业高阶版)
 
-![Python](https://img.shields.io/badge/Python-3.11-blue)
-![License](https://img.shields.io/badge/License-GPLv3-green)
-![Version](https://img.shields.io/badge/Version-v2.4.0-orange)
+一款专为网络工程师打造的轻量级、可视化、高并发的交换机自动化运维管理系统。彻底告别繁琐的命令行敲击，通过 Web 界面实现全网设备的资产可视、一键准入控制、大规模批量割接与自动化灾备。
 
+目前以 **H3C (Comware 体系)** 为核心驱动，底层已完成多厂商架构解耦，即将平滑接入 **华为Huawei (VRP 体系)** 与 **锐捷Ruijie**。
 
-基于 Python 3.11 + Flask + Netmiko 开发的企业级 H3C 交换机 Web 运维平台。
-本项目致力于在**零额外硬件成本**的前提下，充分挖掘交换机底层安全特性，从早期的单一脚本工具不断进化为集成了 **资产管理**、**安全登录** 、**ACL 极简管理**和 **批量自动化备份**、**日志审计**的综合运维系统，实现堪比商业 NAC（网络准入控制）系统的安全管控能力。
+---
 
-### 🚀 v2.4.0 引入 Excel 批量部署与瀑布流日志引擎
-✨ 核心新特性：
-1. Excel 自动化引擎：新增『Excel 批量部署』核心业务模块，支持上传标准化表格进行全网跨交换机的规则批量下发。
-2. 预检与防呆机制：前端引入数据解析预览大屏，支持下发前的格式校验与状态核对，杜绝盲目批量执行引发网络事故。
-3. 终端瀑布流回显：重构批量执行逻辑，前端引入极客风黑色控制台，实时捕获并滚动渲染底层交换机 SSH 交互日志（完美转义 <H3C> 提示符），提供极致的执行掌控感。
-4. 强力容错兼容：后端解析引擎同步支持 .xlsx 与纯文本 .csv 格式，并彻底修复了 Excel 幽灵浮点数（如 VLAN 202.0）导致的非法指令报错问题。
+## ✨ 核心特性 (Key Features)
 
-🔥 系统架构正式迈入自动化割接时代！
+### 📊 1. 可视化数据看板 (Dashboard)
+* **全局统筹**：首页直观呈现全网纳管设备总数、今日系统拦截/操作活跃度。
+* **灾备监控**：实时追踪最近一次凌晨自动备份任务的状态与战报。
 
+### 🚀 2. Excel 大规模批量割接引擎
+* **标准化导入**：支持上传 `.xlsx` 或 `.csv` 模板，自动解析并渲染前端核对预览表。
+* **智能防呆机制**：自动修复 Excel 幽灵浮点数（如 VLAN 202.0），下发前严格校验格式。
+* **沉浸式瀑布流终端**：执行时在前端模拟极客终端，实时滚动渲染并转义底层交换机 SSH 交互回显日志，执行进度与报错细节一览无余。
 
-### 🚀 v2.3.2 引入 APScheduler 实现凌晨无人值守自动备份 
+### 🛡️ 3. 极严苛的安全与审计机制
+* **核心链路保护 (Protected Ports)**：基于关键词（如 Uplink、Core、Trunk）智能拦截高危端口的普通配置下发，防止全网瘫痪。
+* **系统操作审计 (Audit Logs)**：所有变更操作、拦截记录、定时任务均被强制打上时间戳与 IP 烙印，并提供 SIEM 级视角的溯源弹窗，彻底消灭“无头网络事故”。
 
-✨ 核心新特性：
-1. 任务调度底层：成功集成轻量级调度框架 APScheduler，为系统赋予了后台并发与定时任务处理能力。
-2. 幽灵备份任务：设定每天凌晨 2:00 触发静默巡检，自动遍历全网设备拉取最新配置，并按日期分类归档，实现 100% 无人值守灾备。
-3. 审计日志联动：调度引擎执行完毕后，自动将汇总战报（包含成功/失败数、存储路径）以『System(系统)』身份写入操作审计日志，形成闭环。
-4. 依赖升级：更新 requirements.txt，纳入 APScheduler 及相关时区依赖包。
+### ⏰ 4. 幽灵定时灾备 (Auto Backup)
+* **无人值守**：内置 `APScheduler` 调度引擎，每日凌晨 2:00 静默唤醒。
+* **分类归档**：并发登录全网资产拉取最新配置，按 `YYYY-MM-DD` 自动分类建档，任务战报自动写入审计日志。
 
+### 📁 5. 多厂商资产管理 (Asset Management)
+* **色彩标识**：设备列表自动根据品牌（H3C、Huawei 等）赋予专属色彩徽章。
+* **自然排序与防重**：快捷连接列表采用 `localeCompare` 算法实现中文拼音与字母自然排序；后端强制校验 IP 唯一性，导入时智能跳过重复项。
+* **多端一步录入**：支持前端表单单台添加，也支持极速 Excel 批量资产导入。
 
-### 🚀 v2.3.1 UI/UX: 审计日志交互重构，主界面极致瘦身
+---
 
-✨ 交互体验升级：
-1. 空间释放：将原本占用主界面的『系统操作审计日志』大屏模块，重构为顶部导航栏的全局弹窗 (Modal) 触发。彻底清爽化主配置区，消除视觉干扰。
-2. 沉浸式阅读：日志弹窗采用 XL 超大尺寸与自适应滚动条，配合状态徽章 (Badge) 渲染，提供类似专业级 SIEM 系统的沉浸式溯源体验。
-3. 性能优化：取消网页初始化 (DOMContentLoaded) 时的日志自动全量拉取，改为『点击按钮时按需加载 (Lazy Load)』，大幅提升页面首屏渲染速度与降低后端初始化压力。
-
-### 🚀 v2.3.0最新重大更新
-
-* **🛡️ 极致的安全准入机制 (混合 VLAN 完美兼容)**：
-  深度重构了针对 H3C 交换机的底层下发逻辑，完美解决了 IPSG (IP 源防欺骗) 与 DAI (ARP 动态检测) 模块在复杂网络下的死锁冲突。
-  * **Access 接口**：极简配置，利用隐式 VLAN 继承，实现 IP 伪造与 ARP 欺骗的“双重绝杀”。
-  * **Trunk 接口**：精准打标，确保 AP 无线端（手机）免密放行与有线端（电脑）严格准入的完美隔离。
-* **🛑 企业级“防呆”操作拦截**：
-  引入基于前后端联动的强校验机制。自动识别物理接口特征，严格拦截模式错配（如试图在 Trunk 口下发 Access 规则），彻底杜绝运维手滑导致的大面积断网事故。
-* **🖥️ 极客风动态交互体验**：
-  全新引入 Linux 终端风格的动态 SSH 进度条动画。实时反馈系统执行状态（如发起连接、下发指令、读取回显等），彻底消除因交换机响应慢带来的“网页假死”等待焦虑。
+## 📸 界面预览 (Screenshots)
 
 
-## ✨ v2.2.0 核心架构大升级
+**1. 首页数据看板与资产速连**
+![Dashboard](./screenshots/dashboard.png)
 
-本次更新重构了底层的准入控制逻辑，完美解决复杂业务场景下的安全准入难题：
-* 🛡️ **双模准入策略 (Dual-Mode NAC)**：
-  * **Access 严格模式**：针对纯办公/视频/公安网，下发物理接口级 `ip verify source`，防御力拉满。
-  * **Trunk 混合模式**：针对接 AP 的复杂端口（手机需动态 DHCP，电脑需静态绑定）。采用**全局 IP Source Binding + VLAN 级 ARP Detection** 的创新架构，实现同一物理端口下的差异化管控。
-* 🔍 **MAC 寻址工具**：支持一键反查 MAC 地址所在的物理端口，并自动联动前端界面进行配置。
-* 📡 **智能解析引擎**：彻底重构接口解析逻辑，精准匹配短名/长名，完美兼容万兆口（XGE/Ten-Gigabit），并在下拉框直观显示端口的 `[UP/DOWN]` 状态及 `[Access/Trunk]` 模式。
+**2. Excel 批量自动化部署与瀑布流日志**
+![Excel Batch](./screenshots/piliangbushu.png)
 
-## 🚀 核心自动化功能
+**3. 企业级安全审计日志中心**
+![Audit Logs](./screenshots/autobackup.png)
 
-* **一键批量备份 (Batch Backup)**：轮询数据库所有设备，自动并发抓取配置并按日期归档，内置智能容错机制。
-* **资产管理 (Asset Management)**：内置 SQLite 数据库，可视化管理全网交换机（支持自定义 SSH 端口）。
-* **安全会话控制**：基于 Flask-Login 的认证系统，哈希加密保护资产数据。
-* **ACL 极简管理**：将繁琐的 MAC ACL 规则抽象为直观的表格增删改查。
+**4. 多厂商资产管理控制台**
+![Asset Management](./screenshots/devices.png)
 
-## 📸 运行截图
+**5. 端口安全绑定**
 
-### 1. 资产管理与批量自动备份
-*(请在此处插入你的备份日志截图)*
+![端口配置](./screenshots/web2-0.png)
+![获取端口信息](./screenshots/web2.png)
+![设备端口保护](./screenshots/GEprotect.png)
 
-### 2. 双模端口安全绑定与 MAC 寻址
-*(此处插入端口管理、模式选择及 MAC 寻址截图)*
+**6. **交换机自动备份**
+![配置自动备份](./screenshots/autobackup.png)
 
+**7. 操作时增加进度条**
 
+![操作进度条](./screenshots/jindutiao.png)
+---
 
-## 🛠️ 环境依赖
+## 🛠️ 技术栈 (Tech Stack)
 
-本项目基于 **Python 3.11** 开发，请确保你的运行环境符合要求。
+* **后端框架**: Python 3.8+ / Flask
+* **数据库**: SQLite3 (极轻量，无需额外配置)
+* **网络自动化引擎**: Paramiko (SSH2 协议) / Netmiko (架构预留)
+* **任务调度引擎**: APScheduler
+* **前端渲染**: HTML5 / Bootstrap 5 / 原生 Async JavaScript
+* **文件解析**: openpyxl / csv
+
+---
+
+## 📦 快速部署 (Installation)
+
+1. **克隆项目 / 下载源码**
+   ```bash
+   git clone [https://github.com/yourusername/sygaSwitchAdmin.git](https://github.com/yourusername/sygaSwitchAdmin.git)
+   cd sygaSwitchAdmin
+   
+2. **创建并激活虚拟环境 (强烈推荐)**
+
+   ```bash
+#Windows (Anaconda/Miniconda)
+conda create -n switch_admin python=3.10
+conda activate switch_admin
+
+3. **安装依赖**
+
+   ```bash
+pip install -r requirements.txt
+
+4. **一键启动服务**
 
 ```bash
-pip install -r requirements.txt
-```
-
-**请确保运行环境能通过 SSH 连接到交换机。**
-
-## 🚀 启动方式
-```
 python run_server.py
 ```
 
-访问浏览器：http://127.0.0.1:8080
-
-**默认账号**
-
-- 首次启动会自动初始化数据库。
-- **用户名**：`admin`
-- **初始密码**：`admin888`
-- 建议登录后点击右上角修改密码)
-
-## 📂 目录结构说明
-
-```
-H3C-Switch-Admin-Tool/
-├── backups/             # [自动生成] 存放批量备份的配置文件，按日期归档
-├── net_assets.db        # [自动生成] SQLite 数据库，存储用户和资产信息
-├── app.py               # Flask 后端核心逻辑
-├── switch_driver.py     # H3C 设备交互驱动 (Netmiko 封装)
-├── database.py          # 数据库操作模块 (ORM)
-├── templates/           # HTML 前端页面
-│   ├── index.html       # 主控制台
-│   └── login.html       # 登录页面
-├── static/              # 静态资源 (CSS/JS)
-├── requirements.txt     # 项目依赖列表
-└── README.md            # 项目说明文档
-```
-
-## ⚠️ 注意事项
-
-- **数据安全**：`net_assets.db` 包含资产信息，请勿上传至公开仓库（`.gitignore` 已默认忽略）。
-- **备份文件**：`backups/` 目录包含网络配置敏感信息，请妥善保管。
-- **端口说明**：程序默认运行在 **8080** 端口，如需修改请编辑 `app.py`。
-
-## 📜 开源协议
-
-本项目采用 **GNU General Public License v3.0 (GPL-3.0)** 协议。
-
-- 你可以自由地复制、分发和修改本软件。
-- 如果你发布了修改后的版本，必须同样基于 GPL-3.0 协议开源。
-- 本软件按“原样”提供，不提供任何形式的担保。
-
-## 📸 运行截图
-
-### 1. 资产管理与批量备份日志
-
-*![登录页面](./screenshots/v2-web0.png)*
-
-*![首页](./screenshots/v2-homepage.png)*
-
-*![资产管理](./screenshots/v2-web2.png)*
-
-*![备份日志](./screenshots/v2-backuplog.png)*
-
-### 2. 端口安全绑定
-
-*![端口配置](./screenshots/web2-0.png)*
-*![获取端口信息](./screenshots/web2.png)*
-
-### 3. 设备管理列表
-*![资产列表](./screenshots/switchlist.png)*
-
-### 4. 设备端口保护
-
-*![设备端口保护](./screenshots/GEprotect.png)*
-
-### 5. 操作时增加进度条
-
-*![操作进度条](./screenshots/jindutiao.png)*
-
-### 6. 增加日志审计模块
-
-*![日志审计](./screenshots/log.png)*
-
-### 7. 增加交换机配置自动备份模块
-
-*![配置自动备份](./screenshots/autobackup.png)*
 
 
+## 服务启动后，默认监听 http://0.0.0.0:8080，局域网内任意浏览器即可访问。
+
+
+## 🗺️ 未来路线图 (Roadmap v3.0+)
+
+[1] 多厂商驱动支持: 接入 HuaweiManager 实现华为设备的无缝调度。
+
+[2] Config Diff 历史配置差异比对: 提供类似 Git 的红绿高亮视图，比对昨日与今日的交换机配置变化。
+
+[3] MAC / IP 全网物理定位 (MAC Tracker): 输入 MAC 地址，并发追踪并精准定位其所在的楼层交换机与物理端口。
+
+[4] 密码库高强度加密: SQLite 中的凭证由明文升级为 AES256 密文存储。
+
+## ⚠️ 免责声明: 本工具涉及对底层网络设备的直接配置修改，在生产环境中批量下发前，请务必在测试设备上充分验证！
