@@ -378,3 +378,176 @@ class H3CManager:
             raise e
         finally:
             conn.disconnect()
+			
+# ==========================================
+# 🚀 华为交换机驱动引擎 (继承自 H3CManager)
+# ==========================================
+class HuaweiManager(H3CManager):
+    def __init__(self, ip, username, password, port=22):
+        super().__init__(ip, username, password, port)
+        # 强制底层 netmiko 切换为华为模式 (不仅解决命令提示符问题，还会自动处理 save 时的 [Y/N] 确认！)
+        self.device_info['device_type'] = 'huawei'
+        
+    def get_full_config(self):
+        conn = self._get_connection()
+        try:
+            conn.send_command("screen-length 0 disable")
+            config = conn.send_command("display current-configuration")
+            return config
+        except Exception as e:
+            raise e
+        finally:
+            conn.disconnect()
+
+    # 👇 1. 重写华为：获取端口详情与已有绑定记录
+    def get_port_info(self, interface_name):
+        conn = self._get_connection()
+        output_iface = conn.send_command(f"display current-configuration interface {interface_name}")
+        conn.disconnect()
+
+        vlan = ""
+        description = ""
+        bindings = []
+        
+        # 华为特征：是否存在 ip source check user-bind enable
+        is_strict_access = 'ip source check user-bind enable' in output_iface
+
+        import re
+        for line in output_iface.split('\n'):
+            line = line.strip()
+            
+            # 华为获取 Access / Trunk VLAN 的命令差异
+            if line.startswith('port default vlan'): 
+                parts = line.split()
+                if len(parts) >= 4: vlan = parts[3]
+            elif line.startswith('port trunk pvid vlan'):
+                parts = line.split()
+                if len(parts) >= 5: vlan = parts[4]
+            elif line.startswith('description'):
+                parts = line.split(maxsplit=1)
+                if len(parts) > 1: description = parts[1].strip()
+            
+            # 解析华为的绑定记录: user-bind static ip-address 1.1.1.1 mac-address aaaa-bbbb-cccc
+            if 'user-bind' in line and 'ip-address' in line:
+                ip_match = re.search(r'ip-address\s+([\d\.]+)', line)
+                mac_match = re.search(r'mac-address\s+([\w\-\.]+)', line)
+                vlan_inline_match = re.search(r'vlan\s+(\d+)', line)
+
+                if ip_match and mac_match:
+                    bind_vlan = vlan_inline_match.group(1) if vlan_inline_match else vlan
+                    bind_mode = 'access' if is_strict_access else 'trunk'
+                    bindings.append({
+                        'ip': ip_match.group(1), 
+                        'mac': self.format_mac(mac_match.group(1)),
+                        'mode': bind_mode,
+                        'vlan': bind_vlan
+                    })
+
+        return {'vlan': vlan, 'bindings': bindings, 'description': description}, output_iface
+
+    # 👇 2. 重写华为：配置端口绑定
+    def configure_port_binding(self, interface_name, vlan_id, bind_ip, bind_mac, mode="access"):
+        conn = self._get_connection()
+        if mode == "access":
+            cmds = [
+                f"interface {interface_name}",
+                "stp edged-port enable", # 华为命令通常带 enable
+                f"port default vlan {vlan_id}",
+                "ip source check user-bind enable", # 华为开启 IPSG 检查
+                f"user-bind static ip-address {bind_ip} mac-address {self.format_mac(bind_mac)}"
+            ]
+        else: 
+            cmds = [
+                f"interface {interface_name}",
+                f"user-bind static ip-address {bind_ip} mac-address {self.format_mac(bind_mac)} vlan {vlan_id}"
+            ]
+            
+        output = conn.send_config_set(cmds)
+        conn.save_config() # 华为模式下自动处理确认交互
+        conn.disconnect()
+        return output
+
+    # 👇 3. 重写华为：删除端口绑定
+    def delete_port_binding(self, interface_name, del_ip, del_mac, mode="access", vlan_id=None):
+        conn = self._get_connection()
+        if mode == "access":
+            cmds = [
+                f"interface {interface_name}",
+                f"undo user-bind static ip-address {del_ip} mac-address {self.format_mac(del_mac)}"
+            ]
+        else:
+            cmds = [
+                f"interface {interface_name}",
+                f"undo user-bind static ip-address {del_ip} mac-address {self.format_mac(del_mac)} vlan {vlan_id}"
+            ]
+            
+        output = conn.send_config_set(cmds)
+        conn.save_config()
+        conn.disconnect()
+        return output
+
+
+# 👇 重写华为：获取接口列表 (解决抓取到利用率百分比的问题)
+    def get_interface_list(self):
+        conn = self._get_connection()
+        brief_out = conn.send_command("display interface brief")
+        config_out = conn.send_command("display current-configuration interface")
+        conn.disconnect()
+
+        interfaces = []
+        
+        # 1. 解析 brief 获取接口名和物理状态 (UP/DOWN)
+        for line in brief_out.split('\n'):
+            parts = line.split()
+            # 华为的接口行通常以 GigabitEthernet, XGigabitEthernet, GE 等开头
+            if len(parts) >= 3 and parts[0].startswith(('GE', 'XGE', 'Gig', 'XGig', '10GE', 'Eth')):
+                name = parts[0]
+                short_name = name.replace('GigabitEthernet', 'GE')\
+                                 .replace('XGigabitEthernet', 'XGE')\
+                                 .replace('Ten-GigabitEthernet', 'XGE')\
+                                 .replace('Ethernet', 'Eth')
+                
+                # 华为的物理状态在第二列，可能是 up, down, 或者 *down (管理down)
+                link_status = parts[1].replace('*', '').upper() 
+                
+                interfaces.append({
+                    'name': short_name, 
+                    'desc': '', 
+                    'link': link_status, 
+                    'type': 'Hybrid' # 华为默认通常是 Hybrid，后面通过 config 精准覆盖
+                })
+        
+        # 2. 解析 config 获取描述 (description) 和准确的模式 (port link-type)
+        current_iface = None
+        for line in config_out.split('\n'):
+            line = line.strip()
+            if line.startswith('interface '):
+                full_name = line.split(' ')[1]
+                current_iface = full_name.replace('GigabitEthernet', 'GE')\
+                                         .replace('XGigabitEthernet', 'XGE')\
+                                         .replace('Ten-GigabitEthernet', 'XGE')\
+                                         .replace('Ethernet', 'Eth')
+            elif current_iface:
+                if line.startswith('description '):
+                    desc_text = line.replace('description ', '').strip()
+                    for iface in interfaces:
+                        if iface['name'] == current_iface:
+                            iface['desc'] = desc_text
+                            break
+                elif line.startswith('port link-type '):
+                    # 抓取 access 或 trunk
+                    port_type = line.split(' ')[-1].capitalize() 
+                    for iface in interfaces:
+                        if iface['name'] == current_iface:
+                            iface['type'] = port_type
+                            break
+        
+        # 3. 格式化输出供前端渲染
+        result = []
+        for iface in interfaces:
+            display_text = f"[{iface['link']}] [{iface['type']}] {iface['name']}"
+            if iface['desc']:
+                display_text += f" ({iface['desc']})"
+            result.append({'value': iface['name'], 'text': display_text})
+            
+        return result		

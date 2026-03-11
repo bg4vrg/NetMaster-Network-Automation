@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>H3C 交换机配置助手 (企业资产版)</title>
+    <title>NetMaster 多厂商网络自动化平台</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
@@ -27,7 +27,7 @@
 
 <div class="container">
     <div class="top-bar">
-        <h3>🛡️ H3C S5130S 配置管理系统</h3>
+        <h3>🛡️ NetMaster 自动化运维平台</h3>
         <div>
             <span class="me-2 text-muted">👤 {{ username }}</span>
             <button class="btn btn-outline-info btn-sm me-2" data-bs-toggle="modal" data-bs-target="#auditModal" onclick="loadAuditLogs()"><i class="bi bi-journal-text"></i> 审计日志</button>
@@ -531,14 +531,13 @@
         }
     }
 
-// === 资产管理 (带自动排序与品牌着色) ===
+// === 资产管理 (修复：下拉框精准绑定 ID) ===
     async function loadSwitches() {
         const response = await fetch('/api/switches');
         if (response.redirected) { window.location.href = response.url; return; }
         const result = await response.json();
         
-        // 💡 修复：利用 localeCompare 对设备名称进行自然排序（支持中文拼音和字母）
-        switchData = result.data.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+        switchData = result.data.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-CN'));
         
         const select = document.getElementById('saved_switches');
         const tbody = document.getElementById('switch_list_body');
@@ -546,17 +545,16 @@
         select.innerHTML = '<option value="">-- 请选择设备或手动输入 --</option>';
         tbody.innerHTML = '';
         
-        switchData.forEach((sw, index) => {
+        switchData.forEach((sw) => {
             const vendorTag = sw.vendor ? sw.vendor.toUpperCase() : 'H3C';
             
-            // 下拉框按照 [厂商] 名称 - IP 的格式渲染，顺序已经是排序好的了
-            select.innerHTML += `<option value="${index}">[${vendorTag}] ${sw.name} - ${sw.ip}</option>`;
+            // 💡 核心修复：把 value 改为 sw.id，彻底解决排序导致的错位问题
+            select.innerHTML += `<option value="${sw.id}">[${vendorTag}] ${sw.name} - ${sw.ip}</option>`;
             
-            // 💡 修复：根据品牌动态赋予专属颜色
             let badgeClass = 'bg-secondary';
-            if (sw.vendor === 'h3c') badgeClass = 'bg-primary';            // H3C: 经典蓝
-            if (sw.vendor === 'huawei') badgeClass = 'bg-danger';          // 华为: 经典红
-            if (sw.vendor === 'ruijie') badgeClass = 'bg-info text-dark';  // 锐捷: 青蓝色
+            if (sw.vendor === 'h3c') badgeClass = 'bg-primary';            
+            if (sw.vendor === 'huawei') badgeClass = 'bg-danger';          
+            if (sw.vendor === 'ruijie') badgeClass = 'bg-info text-dark';  
             
             tbody.innerHTML += `
                 <tr>
@@ -567,6 +565,21 @@
                     <td><button class="btn btn-outline-danger btn-sm" onclick="delSwitch(${sw.id})"><i class="bi bi-trash"></i></button></td>
                 </tr>`;
         });
+    }
+
+    // === 快捷填充 (修复：通过 ID 查找) ===
+    function fillSwitchInfo() {
+        const selectedId = document.getElementById('saved_switches').value;
+        if (!selectedId) return;
+        
+        // 💡 核心修复：通过唯一 ID 精准查找设备，无视数组怎么排序
+        const sw = switchData.find(s => s.id == selectedId);
+        if (sw) {
+            document.getElementById('sw_ip').value = sw.ip;
+            document.getElementById('sw_port').value = sw.port;
+            document.getElementById('sw_user').value = sw.username;
+            document.getElementById('sw_pass').value = sw.password;
+        }
     }
 
     async function addSwitch() {

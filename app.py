@@ -4,7 +4,7 @@ import os
 import datetime
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from switch_driver import H3CManager
+from switch_driver import H3CManager, HuaweiManager
 import database as db
 import traceback
 
@@ -37,9 +37,19 @@ def load_user(user_id):
         return User(id=user_data['id'], username=user_data['username'])
     return None
 
-# === 辅助函数 ===
+# === 辅助函数：智能调度底层驱动 ===
 def get_manager(data):
     port = int(data.get('port', 22)) 
+    # 尝试从请求中获取厂商，如果没有，就去数据库里根据 IP 查出来
+    vendor = data.get('vendor')
+    if not vendor:
+        switches = db.get_all_switches()
+        target_sw = next((s for s in switches if s['ip'] == data['ip']), None)
+        vendor = target_sw.get('vendor', 'h3c') if target_sw else 'h3c'
+        
+    # 💡 根据厂商智能调度驱动
+    if vendor.lower() == 'huawei':
+        return HuaweiManager(data['ip'], data['user'], data['pass'], port)
     return H3CManager(data['ip'], data['user'], data['pass'], port)
 
 # === 页面路由 ===
@@ -193,61 +203,6 @@ def api_dashboard_stats():
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
 
-# === 批量备份功能 ===
-@app.route('/batch_backup', methods=['POST'])
-@login_required
-def batch_backup():
-    # 1. 获取所有设备
-    switches = db.get_all_switches()
-    if not switches:
-        return jsonify({'status': 'error', 'msg': '数据库中没有设备，请先添加！'})
-
-    # 2. 创建当天的备份文件夹
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    today_dir = os.path.join(BACKUP_ROOT, today)
-    if not os.path.exists(today_dir):
-        os.makedirs(today_dir)
-
-    log_messages = [f"🚀 开始执行批量备份，共 {len(switches)} 台设备..."]
-    success_count = 0
-    fail_count = 0
-
-    # 3. 循环备份
-    for sw in switches:
-        # 为了防止文件名非法，清理一下名称
-        safe_name = sw['name'].replace('/', '_').replace('\\', '_').replace(' ', '_')
-        target_ip = sw['ip']
-        
-        log_messages.append(f"🔄 正在连接: {sw['name']} ({target_ip})...")
-        
-        try:
-            # 连接设备
-            mgr = H3CManager(target_ip, sw['username'], sw['password'], sw['port'])
-            # 抓取配置
-            config_text = mgr.get_full_config()
-            
-            # 保存文件: backups/2026-02-12/核心交换机_192.168.1.1.cfg
-            filename = f"{safe_name}_{target_ip}.cfg"
-            filepath = os.path.join(today_dir, filename)
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(config_text)
-                
-            success_count += 1
-            log_messages.append(f"<span class='status-permit'>✅ 备份成功</span>: 已保存至 {filename}")
-            
-        except Exception as e:
-            fail_count += 1
-            error_msg = str(e)
-            if "Authentication failed" in error_msg: error_msg = "认证失败(密码错误)"
-            elif "timed out" in error_msg: error_msg = "连接超时"
-            log_messages.append(f"<span class='status-deny'>❌ 备份失败</span>: {error_msg}")
-
-    # 4. 总结
-    final_msg = f"<br>🏁 <b>任务结束</b><br>成功: {success_count} 台<br>失败: {fail_count} 台<br>📁 文件保存在: {today_dir}"
-    full_log = "<br>".join(log_messages) + final_msg
-    
-    return jsonify({'status': 'success', 'log': full_log})
 
 # === 业务路由 ===
 
@@ -502,12 +457,78 @@ def execute_excel_row():
         db.log_operation(current_user.username, client_ip, switch_ip, "批量端口绑定", f"{details} | 报错: {str(e)}", "失败")
         return jsonify({'status': 'error', 'msg': str(e)})
 
-# === ⏰ 凌晨幽灵：定时自动备份任务 ===
+# === 批量备份功能 (完美双引擎 + 时间戳版) ===
+@app.route('/batch_backup', methods=['POST'])
+@login_required
+def batch_backup():
+    switches = db.get_all_switches()
+    if not switches:
+        return jsonify({'status': 'error', 'msg': '数据库中没有设备，请先添加！'})
+
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    today_dir = os.path.join(BACKUP_ROOT, today)
+    if not os.path.exists(today_dir):
+        os.makedirs(today_dir)
+
+    log_messages = [f"🚀 开始执行批量备份，共 {len(switches)} 台设备..."]
+    success_count, fail_count = 0, 0
+
+    for sw in switches:
+        safe_name = sw['name'].replace('/', '_').replace('\\', '_').replace(' ', '_')
+        target_ip = sw['ip']
+        vendor = sw.get('vendor', 'h3c').lower()
+        
+        log_messages.append(f"🔄 正在连接: {sw['name']} ({target_ip}) [{vendor.upper()}]...")
+        
+        try:
+            # 💡 双引擎调度
+            if vendor == 'huawei':
+                mgr = HuaweiManager(target_ip, sw['username'], sw['password'], sw['port'])
+            else:
+                mgr = H3CManager(target_ip, sw['username'], sw['password'], sw['port'])
+                
+            config_text = mgr.get_full_config()
+            
+            # 💡 文件名加入时分秒后缀，避免一天多次覆盖
+            time_suffix = datetime.datetime.now().strftime("%H%M")
+            filename = f"{safe_name}_{target_ip}_{time_suffix}.cfg"
+            filepath = os.path.join(today_dir, filename)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(config_text)
+                
+            success_count += 1
+            log_messages.append(f"<span class='status-permit'>✅ 备份成功</span>: 已保存至 {filename}")
+            
+        except Exception as e:
+            fail_count += 1
+            error_msg = str(e)
+            if "Authentication failed" in error_msg: error_msg = "认证失败(密码错误)"
+            elif "timed out" in error_msg: error_msg = "连接超时"
+            log_messages.append(f"<span class='status-deny'>❌ [{target_ip}] 备份失败</span>: {error_msg}")
+            try:
+                db.log_operation(current_user.username, request.remote_addr, target_ip, "单台配置备份", f"失败原因: {error_msg}", "失败")
+            except:
+                pass
+
+    final_msg = f"<br>🏁 <b>任务结束</b><br>成功: {success_count} 台<br>失败: {fail_count} 台<br>📁 文件保存在: {today_dir}"
+    full_log = "<br>".join(log_messages) + final_msg
+    
+    try:
+        details = f"手动触发批量备份结束。成功: {success_count}, 失败: {fail_count}。存储路径: {today_dir}"
+        status = "成功" if fail_count == 0 else ("部分失败" if success_count > 0 else "全部失败")
+        client_ip = request.remote_addr
+        db.log_operation(current_user.username, client_ip, "ALL_SWITCHES", "手动批量备份", details, status)
+    except Exception as e:
+        pass
+
+    return jsonify({'status': 'success', 'log': full_log})
+
+# === ⏰ 凌晨幽灵：定时自动备份任务 (完美双引擎 + 时间戳版) ===
 def auto_backup_task():
     print(f"\n🌙 [{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [系统调度] 开始执行凌晨自动备份...")
     switches = db.get_all_switches()
     if not switches:
-        print("🌙 [系统调度] 数据库中没有设备，跳过备份。")
         return
 
     today = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -515,37 +536,57 @@ def auto_backup_task():
     if not os.path.exists(today_dir):
         os.makedirs(today_dir)
 
-    success_count = 0
-    fail_count = 0
+    success_count, fail_count = 0, 0
 
     for sw in switches:
         safe_name = sw['name'].replace('/', '_').replace('\\', '_').replace(' ', '_')
         target_ip = sw['ip']
+        vendor = sw.get('vendor', 'h3c').lower()
+        
         try:
-            mgr = H3CManager(target_ip, sw['username'], sw['password'], sw['port'])
+            # 💡 双引擎调度
+            if vendor == 'huawei':
+                mgr = HuaweiManager(target_ip, sw['username'], sw['password'], sw['port'])
+            else:
+                mgr = H3CManager(target_ip, sw['username'], sw['password'], sw['port'])
+                
             config_text = mgr.get_full_config()
-            filename = f"{safe_name}_{target_ip}.cfg"
+            
+            # 💡 文件名加入时分秒后缀
+            time_suffix = datetime.datetime.now().strftime("%H%M")
+            filename = f"{safe_name}_{target_ip}_{time_suffix}.cfg"
             filepath = os.path.join(today_dir, filename)
+            
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(config_text)
+                
             success_count += 1
-            print(f"  ✅ {target_ip} 备份成功")
+            print(f"  ✅ [{vendor.upper()}] {target_ip} 备份成功 -> {filename}")
         except Exception as e:
             fail_count += 1
-            print(f"  ❌ {target_ip} 备份失败: {e}")
+            error_msg = str(e)
+            if "Authentication failed" in error_msg: error_msg = "认证失败(密码错误)"
+            elif "timed out" in error_msg: error_msg = "连接超时"
+            print(f"  ❌ [{vendor.upper()}] {target_ip} 备份失败: {error_msg}")
+            try:
+                db.log_operation("System(系统)", "Localhost", target_ip, "定时单台备份", f"失败原因: {error_msg}", "失败")
+            except Exception as log_e:
+                pass
 
-    # 🔥 核心联动：记录到我们刚写好的审计日志中！(操作人写死为 System)
     details = f"任务结束。共 {len(switches)} 台。成功: {success_count}, 失败: {fail_count}。路径: {today_dir}"
     status = "成功" if fail_count == 0 else ("部分失败" if success_count > 0 else "全部失败")
-    db.log_operation("System(系统)", "Localhost", "ALL_SWITCHES", "定时自动备份", details, status)
+    
+    try:
+        db.log_operation("System(系统)", "Localhost", "ALL_SWITCHES", "定时自动备份", details, status)
+    except Exception as log_e:
+        pass
     print(f"🌙 [系统调度] 备份任务执行完毕！{details}\n")
-
 
 # 🚀 初始化并启动后台调度器
 scheduler = BackgroundScheduler(timezone="Asia/Shanghai") # 强制指定中国时区，防止服务器时间乱套
 
 # 设定每天凌晨 2:00 准时执行备份任务
-scheduler.add_job(func=auto_backup_task, trigger="cron", hour=2, minute=00)
+scheduler.add_job(func=auto_backup_task, trigger="cron", hour=15, minute=37)
 
 scheduler.start()
 # ============================================
