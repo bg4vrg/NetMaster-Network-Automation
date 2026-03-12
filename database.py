@@ -57,9 +57,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-def init_db():
-    # ... (你原来的 init_db 代码) ...
-    pass
 
 # === 🚀 数据库平滑热升级 ===
 def upgrade_db():
