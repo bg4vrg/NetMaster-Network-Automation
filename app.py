@@ -586,7 +586,7 @@ def auto_backup_task():
 scheduler = BackgroundScheduler(timezone="Asia/Shanghai") # 强制指定中国时区，防止服务器时间乱套
 
 # 设定每天凌晨 2:00 准时执行备份任务
-scheduler.add_job(func=auto_backup_task, trigger="cron", hour=15, minute=37)
+scheduler.add_job(func=auto_backup_task, trigger="cron", hour=2, minute=37)
 
 scheduler.start()
 # ============================================
