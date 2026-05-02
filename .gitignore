@@ -9,10 +9,15 @@ env/
 
 # 交换机备份配置 (这是私密数据，不能传)
 backups/
+data_restore_backups/
+data_backup_before_import_export_*/
+netmaster_data_package_*.zip
 
 # 数据库文件 (如果以后有了数据库，不要传)
 *.db
 *.sqlite3
+*.key
+net_assets.key
 
 # IDE 配置文件
 .vscode/
@@ -23,3 +28,11 @@ backups/
 
 # 备份文件
 .bak
+
+# 本地开发记录：GitHub 仅保留 README.md
+*.md
+!README.md
+
+# 本地备份目录
+*_backup_*/
+release_backup_*/

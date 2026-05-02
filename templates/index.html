@@ -21,15 +21,116 @@
         .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .status-deny { color: #dc3545; font-weight: bold; }
         .status-permit { color: #198754; font-weight: bold; }
+        .device-connect-card { border: 1px solid rgba(13, 110, 253, 0.35); }
+        .device-connect-card .card-body { padding: 1rem 1.25rem; }
+        .device-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: .5rem;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .device-action-group { display: flex; flex-wrap: wrap; gap: .5rem; }
+        .quick-connect-panel {
+            background: linear-gradient(135deg, #f7fbff 0%, #eef6ff 100%);
+            border: 1px solid #d8e9ff;
+            border-radius: .75rem;
+            padding: .75rem;
+        }
+        .compact-label {
+            color: #6c757d;
+            font-size: .78rem;
+            margin-bottom: .2rem;
+        }
+        .schedule-panel {
+            background: linear-gradient(135deg, #fffaf0 0%, #f4f8ff 100%);
+            border: 1px solid #e6edf7;
+            border-radius: .75rem;
+            padding: .75rem;
+        }
+        .schedule-panel .form-control {
+            font-weight: 700;
+            letter-spacing: .03rem;
+        }
+        .task-summary-card {
+            border: 1px solid #edf0f4;
+            border-radius: .75rem;
+            background: #fff;
+            padding: .65rem .75rem;
+            box-shadow: 0 2px 8px rgba(15, 23, 42, .04);
+        }
+        .task-summary-card .metric {
+            font-size: .78rem;
+            color: #6c757d;
+        }
+        .health-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+            gap: .5rem;
+        }
+        .health-summary-item {
+            border: 1px solid #e9edf3;
+            border-left: 4px solid #198754;
+            border-radius: .65rem;
+            background: #fff;
+            padding: .55rem .65rem;
+        }
+        .health-summary-item.warning { border-left-color: #ffc107; }
+        .health-summary-item .name {
+            font-size: .78rem;
+            color: #6c757d;
+        }
+        .health-summary-item .detail {
+            font-size: .9rem;
+            font-weight: 700;
+            line-height: 1.25;
+        }
+        .alarm-overview {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: .6rem;
+        }
+        .alarm-tile {
+            border-radius: .9rem;
+            padding: .75rem;
+            color: #fff;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, .12);
+        }
+        .alarm-tile .num { font-size: 1.6rem; font-weight: 800; line-height: 1; }
+        .alarm-tile .label { font-size: .78rem; opacity: .9; }
+        .alarm-device-card {
+            border: 1px solid #e9edf3;
+            border-radius: .85rem;
+            background: #fff;
+            padding: .75rem;
+            margin-bottom: .6rem;
+        }
+        .alarm-device-card.high { border-left: 5px solid #dc3545; }
+        .alarm-device-card.medium { border-left: 5px solid #ffc107; }
+        .alarm-device-card.low { border-left: 5px solid #0dcaf0; }
+        .alarm-device-card.normal { border-left: 5px solid #198754; }
+        .alarm-device-card.failed { border-left: 5px solid #6c757d; }
+        @media (max-width: 768px) {
+            .device-toolbar { align-items: stretch; }
+            .device-action-group, .device-action-group .btn { width: 100%; }
+        }
     </style>
 </head>
 <body>
 
 <div class="container">
     <div class="top-bar">
-        <h3>🛡️ NetMaster 自动化运维平台</h3>
+        <h3 class="mb-0">
+            🛡️ NetMaster 自动化运维平台
+            <button class="btn btn-outline-primary btn-sm ms-2 align-middle" data-bs-toggle="modal" data-bs-target="#versionModal" onclick="loadVersionInfo()">
+                <i class="bi bi-info-circle"></i> <span id="app_version_badge">版本信息</span>
+            </button>
+        </h3>
         <div>
             <span class="me-2 text-muted">👤 {{ username }}</span>
+            <button class="btn btn-outline-primary btn-sm me-2" data-bs-toggle="modal" data-bs-target="#dataPackageModal"><i class="bi bi-database-down"></i> 数据备份</button>
+            <button class="btn btn-outline-warning btn-sm me-2" data-bs-toggle="modal" data-bs-target="#taskCenterModal" onclick="loadTaskCenter()"><i class="bi bi-list-task"></i> 任务中心</button>
+            <button class="btn btn-outline-success btn-sm me-2" data-bs-toggle="modal" data-bs-target="#healthModal" onclick="loadHealthCheck()"><i class="bi bi-heart-pulse"></i> 健康检查</button>
             <button class="btn btn-outline-info btn-sm me-2" data-bs-toggle="modal" data-bs-target="#auditModal" onclick="loadAuditLogs()"><i class="bi bi-journal-text"></i> 审计日志</button>
             <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#pwdModal">修改密码</button>
             <a href="/logout" class="btn btn-danger btn-sm">退出登录</a>
@@ -37,7 +138,7 @@
     </div>
 
     <div class="row mb-4 g-3" id="dashboard_area">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card h-100 border-0 shadow-sm bg-primary text-white">
                 <div class="card-body d-flex align-items-center">
                     <div class="me-3"><i class="bi bi-router" style="font-size: 2.5rem; opacity: 0.8;"></i></div>
@@ -48,7 +149,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card h-100 border-0 shadow-sm bg-success text-white" id="dash_backup_card">
                 <div class="card-body d-flex align-items-center">
                     <div class="me-3"><i class="bi bi-shield-check" style="font-size: 2.5rem; opacity: 0.8;"></i></div>
@@ -60,7 +161,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card h-100 border-0 shadow-sm text-white" style="background-color: #6f42c1;">
                 <div class="card-body d-flex align-items-center">
                     <div class="me-3"><i class="bi bi-activity" style="font-size: 2.5rem; opacity: 0.8;"></i></div>
@@ -71,58 +172,83 @@
                 </div>
             </div>
         </div>
+        <div class="col-md-3">
+            <div class="card h-100 border-0 shadow-sm text-white" id="dash_alarm_card" style="background: linear-gradient(135deg, #8b1e1e 0%, #dc3545 100%); cursor:pointer;" data-bs-toggle="modal" data-bs-target="#alarmCenterModal" onclick="loadAlarmDashboard()">
+                <div class="card-body d-flex align-items-center">
+                    <div class="me-3"><i class="bi bi-exclamation-triangle" style="font-size: 2.5rem; opacity: 0.85;"></i></div>
+                    <div class="w-100">
+                        <h6 class="card-title mb-1 text-white-50 fw-bold">当前网络告警</h6>
+                        <h2 class="mb-0 fw-bold" id="dash_alarm_high">-</h2>
+                        <small class="text-white-50" id="dash_alarm_detail">正在加载告警</small>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <div class="card p-4 border-primary">
-        <div class="d-flex justify-content-between mb-3 align-items-center">
-            <h5 class="card-title m-0">📡 设备连接与管理</h5>
-            <div>
-                <button class="btn btn-success btn-sm me-2" onclick="batchBackup()"><i class="bi bi-cloud-download"></i> 一键批量备份</button>
-                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#manageModal">⚙️ 管理设备列表</button>
+    <div class="card device-connect-card shadow-sm">
+        <div class="card-body">
+            <div class="device-toolbar mb-3">
+                <h5 class="card-title m-0"><i class="bi bi-hdd-network text-primary"></i> 设备连接与管理</h5>
+                <div class="device-action-group">
+                    <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#manageModal">
+                        <i class="bi bi-list-ul"></i> 管理设备
+                    </button>
+                    <button class="btn btn-outline-success btn-sm" onclick="batchBackup()">
+                        <i class="bi bi-cloud-download"></i> 批量备份
+                    </button>
+                    <button class="btn btn-warning btn-sm fw-bold" onclick="saveConfig()">
+                        <i class="bi bi-save"></i> 保存配置
+                    </button>
+                </div>
             </div>
-        </div>
-        
-        <div class="row g-3 mb-3 bg-light p-3 rounded mx-0 border">
-            <div class="col-md-12">
-                <label class="form-label fw-bold text-primary">📂 快捷连接 (选择后自动填充)：</label>
-                <select class="form-select border-primary" id="saved_switches" onchange="fillSwitchInfo()">
-                    <option value="">-- 请选择设备或手动输入 --</option>
-                </select>
-            </div>
-        </div>
 
-        <div class="row g-3 align-items-end">
-            <div class="col-md-3">
-                <label class="form-label text-muted">IP 地址</label>
-                <input type="text" class="form-control" id="sw_ip" placeholder="192.168.x.x">
-            </div>
-            <div class="col-md-2">
-                <label class="form-label text-muted">端口</label>
-                <input type="number" class="form-control" id="sw_port" value="22">
-            </div>
-            <div class="col-md-2">
-                <label class="form-label text-muted">用户名</label>
-                <input type="text" class="form-control" id="sw_user" value="admin">
-            </div>
-            <div class="col-md-3">
-                <label class="form-label text-muted">密码</label>
-                <input type="password" class="form-control" id="sw_pass" placeholder="如有保存自动填充">
-            </div>
-            <div class="col-md-2">
-                <button class="btn btn-info text-white w-100 fw-bold" onclick="testConnection()">🔌 连接测试</button>
-            </div>
-            
-            <div class="col-md-12 text-end mt-3 border-top pt-3">
-                <span class="text-muted me-2" style="font-size: 0.9rem;">操作完成后，请记得保存配置:</span>
-                <button class="btn btn-warning fw-bold" onclick="saveConfig()">💾 保存当前配置 (Write)</button>
+            <div class="quick-connect-panel">
+                <div class="row g-2 align-items-end">
+                    <div class="col-lg-5 col-md-12">
+                        <label class="compact-label fw-bold text-primary">
+                            <i class="bi bi-lightning-charge"></i> 快捷连接
+                        </label>
+                        <select class="form-select form-select-sm border-primary" id="saved_switches" onchange="fillSwitchInfo()">
+                            <option value="">-- 选择设备自动填充，或直接手动输入 --</option>
+                        </select>
+                    </div>
+                    <div class="col-lg-2 col-md-4">
+                        <label class="compact-label">IP 地址</label>
+                        <input type="text" class="form-control form-control-sm" id="sw_ip" placeholder="192.168.x.x">
+                    </div>
+                    <div class="col-lg-1 col-md-2">
+                        <label class="compact-label">端口</label>
+                        <input type="number" class="form-control form-control-sm" id="sw_port" value="22">
+                    </div>
+                    <div class="col-lg-1 col-md-3">
+                        <label class="compact-label">用户名</label>
+                        <input type="text" class="form-control form-control-sm" id="sw_user" value="admin">
+                    </div>
+                    <div class="col-lg-2 col-md-3">
+                        <label class="compact-label">密码</label>
+                        <input type="password" class="form-control form-control-sm" id="sw_pass" placeholder="保存后自动填充">
+                    </div>
+                    <div class="col-lg-1 col-md-12">
+                        <button class="btn btn-info btn-sm text-white w-100 fw-bold" onclick="testConnection()">
+                            <i class="bi bi-plug"></i> 测试
+                        </button>
+                    </div>
+                </div>
+                <div class="text-muted mt-2" style="font-size: 0.78rem;">
+                    配置变更后可手动保存；每日自动备份成功后也会执行保存配置。
+                </div>
             </div>
         </div>
     </div>
 
     <ul class="nav nav-tabs" id="myTab" role="tablist">
-        <li class="nav-item" role="presentation"><button class="nav-link active" id="acl-tab-btn" data-bs-toggle="tab" data-bs-target="#acl-tab-pane" type="button" role="tab">ACL MAC 4000 管理</button></li>
+        <li class="nav-item" role="presentation"><button class="nav-link active" id="acl-tab-btn" data-bs-toggle="tab" data-bs-target="#acl-tab-pane" type="button" role="tab">ACL 策略组管理</button></li>
         <li class="nav-item" role="presentation"><button class="nav-link" id="port-tab-btn" data-bs-toggle="tab" data-bs-target="#port-tab-pane" type="button" role="tab">端口 IP+MAC 绑定</button></li>
         <li class="nav-item" role="presentation"><button class="nav-link text-success fw-bold" id="excel-tab-btn" data-bs-toggle="tab" data-bs-target="#excel-tab-pane" type="button" role="tab">🔥 Excel 批量部署</button></li>
+        <li class="nav-item" role="presentation"><button class="nav-link text-primary fw-bold" id="roam-tab-btn" data-bs-toggle="tab" data-bs-target="#roam-tab-pane" type="button" role="tab">🚚 终端漫游</button></li>
+        <li class="nav-item" role="presentation"><button class="nav-link text-warning fw-bold" id="diff-tab-btn" data-bs-toggle="tab" data-bs-target="#diff-tab-pane" type="button" role="tab" onclick="loadBackupFiles()">配置差异比对</button></li>
+        <li class="nav-item" role="presentation"><button class="nav-link" id="profile-tab-btn" data-bs-toggle="tab" data-bs-target="#profile-tab-pane" type="button" role="tab" onclick="loadPortProfiles()">端口画像</button></li>
     </ul>
 
     <div class="tab-content p-3 border border-top-0 bg-white shadow-sm mb-4" id="myTabContent" style="min-height: 300px;">
@@ -130,18 +256,22 @@
         <div class="tab-pane fade show active" id="acl-tab-pane" role="tabpanel">
             <div class="row">
                 <div class="col-md-5">
-                    <h5>添加规则</h5>
-                    <div class="alert alert-info py-2" style="font-size: 0.9rem;">提示: 新规则请指定小于 999 的 ID。</div>
-                    <div class="input-group mb-3"><span class="input-group-text">ID</span><input type="number" class="form-control" id="acl_id" placeholder="12"></div>
+                    <h5>添加 MAC ACL 规则</h5>
+                    <div class="alert alert-info py-2" style="font-size: 0.9rem;">默认维护 ACL 4000；如需维护其他 MAC ACL 组，请先填写 ACL 组号。</div>
+                    <div class="input-group mb-3"><span class="input-group-text">ACL组</span><input type="number" class="form-control" id="acl_number" value="4000" min="2000" max="4999"></div>
+                    <div class="input-group mb-3"><span class="input-group-text">Rule ID</span><input type="number" class="form-control" id="acl_id" placeholder="12"></div>
                     <div class="input-group mb-3"><span class="input-group-text">MAC</span><input type="text" class="form-control" id="acl_mac" placeholder="aaaa-bbbb-cccc"><button class="btn btn-primary" onclick="addAcl()">添加</button></div>
                 </div>
                 <div class="col-md-7 border-start">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h5>规则列表</h5>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="loadAcl()">🔄 刷新</button>
+                        <h5>ACL 策略组列表</h5>
+                        <div>
+                            <button class="btn btn-sm btn-outline-primary me-1" onclick="loadAcl(false)">查询当前组</button>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="loadAcl(true)">查询全部ACL</button>
+                        </div>
                     </div>
                     <table class="table table-striped table-hover table-sm">
-                        <thead><tr><th>Rule ID</th><th>动作</th><th>MAC</th><th>操作</th></tr></thead>
+                        <thead><tr><th>ACL组</th><th>类型</th><th>Rule ID</th><th>动作</th><th>匹配内容</th><th>操作</th></tr></thead>
                         <tbody id="acl_table_body"></tbody>
                     </table>
                 </div>
@@ -190,6 +320,14 @@
                                 <button class="btn btn-success" onclick="applyPort()">执行绑定</button>
                             </div>
                         </div>
+                        <div class="col-md-12">
+                            <label class="form-label">端口描述</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="port_description" maxlength="120" placeholder="查询端口后自动显示；可在此修改描述">
+                                <button class="btn btn-outline-primary" onclick="savePortDescription()">保存描述</button>
+                                <button class="btn btn-outline-secondary" onclick="clearPortDescription()">清空</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="col-md-12">
@@ -206,7 +344,7 @@
             <div class="row">
                 <div class="col-md-12 mb-3">
                     <div class="alert alert-secondary py-2 mb-2" style="font-size: 0.9rem;">
-                        <i class="bi bi-info-circle"></i> <b>表格格式要求：</b>第一行必须为表头，且精确包含以下列名：<code>交换机IP</code>, <code>端口</code>, <code>VLAN</code>, <code>绑定IP</code>, <code>绑定MAC</code>, <code>模式</code> (填 access 或 trunk)。
+                        <i class="bi bi-info-circle"></i> <b>表格格式要求：</b>第一行必须为表头，且精确包含以下列名：<code>交换机IP</code>, <code>端口</code>, <code>VLAN</code>, <code>绑定IP</code>, <code>绑定MAC</code>, <code>模式</code> (填 access 或 trunk)。同一 <code>交换机IP + 端口</code> 允许出现多行，系统会自动按端口聚合后一次性下发。
                     </div>
                     <div class="input-group">
                         <input type="file" class="form-control" id="excel_file" accept=".xlsx, .xls">
@@ -234,6 +372,199 @@
                         </table>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="roam-tab-pane" role="tabpanel">
+            <div class="row g-3">
+                <div class="col-lg-5">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3">Step 1. 寻迹定位</h5>
+                            <div class="alert alert-light border mb-3" style="font-size: 0.9rem;">
+                                先选择终端当前所在接入交换机，再输入 <code>MAC</code> 或 <code>IP</code>，系统会优先在已绑定终端列表中定位；未命中时只扫描所选交换机。
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">当前接入交换机</label>
+                                <select class="form-select" id="roam_source_switch">
+                                    <option value="">-- 不确定时才留空全网查找 --</option>
+                                </select>
+                            </div>
+                            <div class="input-group mb-3">
+                                <input type="text" class="form-control" id="roam_query" placeholder="例如: aaaa-bbbb-cccc 或 10.139.27.15">
+                                <button class="btn btn-primary" onclick="lookupTerminalBinding()">定位终端</button>
+                                <button class="btn btn-outline-secondary" onclick="syncMacBindings()">终端更新</button>
+                                <button class="btn btn-outline-dark" onclick="loadMacBindings()">终端列表</button>
+                            </div>
+                            <div id="roam_lookup_result" class="border rounded p-3 bg-light text-muted">
+                                暂未查询到终端位置
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-7">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3">Step 2. 目标设定与迁移</h5>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">目标交换机</label>
+                                    <select class="form-select" id="migrate_target_switch">
+                                        <option value="">-- 请选择目标交换机 --</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">目标端口</label>
+                                    <input type="text" class="form-control" id="migrate_target_interface" placeholder="如: GE1/0/12">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">目标 VLAN</label>
+                                    <input type="text" class="form-control" id="migrate_target_vlan" placeholder="为空时沿用原记录">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">目标模式</label>
+                                    <select class="form-select" id="migrate_target_mode">
+                                        <option value="">沿用原模式</option>
+                                        <option value="access">Access</option>
+                                        <option value="trunk">Trunk</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4 d-flex align-items-end">
+                                    <button class="btn btn-success w-100 fw-bold" onclick="migrateTerminal()">执行终端漫游</button>
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="migrate_dry_run">
+                                        <label class="form-check-label" for="migrate_dry_run">试运行模式：只生成迁移计划，不登录交换机、不下发配置</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="alert alert-warning mt-3 mb-0" style="font-size: 0.9rem;">
+                                迁移流程：先清理旧端口绑定，再在目标端口重新下发，并同步更新已绑定终端列表。
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="row mt-3">
+                <div class="col-12">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0 fw-bold">已绑定终端列表</h6>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="text-muted" id="mac_binding_count" style="font-size: 0.85rem;">未加载</span>
+                            <button class="btn btn-sm btn-outline-success" onclick="exportMacBindingsCsv()">
+                                <i class="bi bi-download"></i> 导出CSV
+                            </button>
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-md-5">
+                            <input type="text" class="form-control form-control-sm" id="mac_binding_search"
+                                   placeholder="搜索 IP / MAC / 交换机 / 端口 / VLAN" oninput="renderMacBindingsRows()">
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select form-select-sm" id="mac_binding_mode_filter" onchange="renderMacBindingsRows()">
+                                <option value="">全部模式</option>
+                                <option value="access">Access</option>
+                                <option value="trunk">Trunk</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <select class="form-select form-select-sm" id="mac_binding_conflict_filter" onchange="renderMacBindingsRows()">
+                                <option value="">全部记录</option>
+                                <option value="ip_conflict">只看同 IP 多 MAC</option>
+                                <option value="mac_conflict">只看同 MAC 多位置</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-responsive border rounded" style="max-height: 320px; overflow-y: auto;">
+                        <table class="table table-sm table-striped table-hover align-middle mb-0">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th>MAC</th>
+                                    <th>IP</th>
+                                    <th>交换机名称</th>
+                                    <th>交换机IP</th>
+                                    <th>端口</th>
+                                    <th>VLAN</th>
+                                    <th>模式</th>
+                                    <th>加入/更新时间</th>
+                                </tr>
+                            </thead>
+                            <tbody id="mac_bindings_body">
+                                <tr><td colspan="8" class="text-center text-muted py-3">点击“终端列表”加载本地记录</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="diff-tab-pane" role="tabpanel">
+            <div class="row g-3">
+                <div class="col-lg-4">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3">本地备份文件</h5>
+                            <div class="alert alert-light border py-2" style="font-size: 0.9rem;">
+                                只读取 <code>backups/</code> 目录下的配置文件，不连接交换机。
+                            </div>
+                            <input type="text" class="form-control form-control-sm mb-2" id="backup_file_search"
+                                   placeholder="搜索设备名 / IP / 日期" oninput="renderBackupFileOptions()">
+                            <div class="mb-2">
+                                <label class="form-label small text-muted">旧配置</label>
+                                <select class="form-select form-select-sm" id="backup_old_select"></select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small text-muted">新配置</label>
+                                <select class="form-select form-select-sm" id="backup_new_select"></select>
+                            </div>
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-outline-secondary btn-sm" onclick="loadBackupFiles()">刷新备份列表</button>
+                                <button class="btn btn-warning btn-sm fw-bold" onclick="compareBackups()">开始比对</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-8">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h5 class="card-title mb-0">差异结果</h5>
+                                <span class="badge bg-secondary" id="backup_diff_summary">未比对</span>
+                            </div>
+                            <pre id="backup_diff_output" class="log-box mb-0" style="min-height: 420px; max-height: 520px; white-space: pre-wrap;">请选择两份备份文件后开始比对。</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="profile-tab-pane" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="mb-0">端口画像</h5>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadPortProfiles()">刷新</button>
+            </div>
+            <div class="alert alert-light border py-2" style="font-size:0.9rem;">
+                基于已绑定终端列表聚合展示每个交换机端口下的终端数量、VLAN、模式和最近更新时间。
+            </div>
+            <div class="table-responsive border rounded" style="max-height: 520px; overflow-y:auto;">
+                <table class="table table-sm table-striped table-hover align-middle mb-0">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th>交换机名称</th>
+                            <th>交换机IP</th>
+                            <th>端口</th>
+                            <th>终端数</th>
+                            <th>VLAN</th>
+                            <th>模式</th>
+                            <th>最近确认</th>
+                        </tr>
+                    </thead>
+                    <tbody id="port_profile_body">
+                        <tr><td colspan="7" class="text-center text-muted py-3">点击刷新加载端口画像</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -275,6 +606,20 @@
     </div>
 </div>
 
+<div class="modal fade" id="versionModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="bi bi-info-circle"></i> 版本信息</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="version_info_body" class="text-muted">正在加载版本信息...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="manageModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
@@ -306,17 +651,281 @@
                         <div class="col-md-2"><div class="input-group input-group-sm"><span class="input-group-text">端口</span><input type="number" class="form-control" id="new_port" value="22"></div></div>
                     </div>
                     <div class="row g-2">
-                        <div class="col-md-5"><input type="text" class="form-control form-control-sm" id="new_user" value="admin" placeholder="用户名"></div>
-                        <div class="col-md-5"><input type="password" class="form-control form-control-sm" id="new_pass" placeholder="密码"></div>
-                        <div class="col-md-2"><button class="btn btn-primary btn-sm w-100" onclick="addSwitch()">➕ 添加</button></div>
+                        <div class="col-md-3"><input type="text" class="form-control form-control-sm" id="new_user" value="admin" placeholder="用户名"></div>
+                        <div class="col-md-3"><input type="password" class="form-control form-control-sm" id="new_pass" placeholder="密码"></div>
+                        <div class="col-md-3">
+                            <select class="form-select form-select-sm" id="new_role" title="接入交换机参与终端更新；备份设备只参与配置备份">
+                                <option value="access" selected>接入交换机</option>
+                                <option value="backup">备份设备</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3"><button class="btn btn-primary btn-sm w-100" onclick="addSwitch()">➕ 添加</button></div>
                     </div>
                 </div>
                 
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="text-muted small">接入交换机参与终端更新；备份设备只参与配置备份。</div>
+                    <div class="input-group input-group-sm" style="max-width: 260px;">
+                        <span class="input-group-text">排序</span>
+                        <select class="form-select" id="switch_sort_key" onchange="renderSwitchTable()">
+                            <option value="name" selected>按名称</option>
+                            <option value="role">按角色</option>
+                            <option value="vendor">按厂商</option>
+                            <option value="ip">按 IP</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
                     <table class="table table-hover table-bordered align-middle text-center table-sm" style="font-size: 0.9rem;">
-                        <thead class="table-light sticky-top"><tr><th>备注名</th><th>厂商</th><th>地址 (IP:Port)</th><th>用户名</th><th>操作</th></tr></thead>
+                        <thead class="table-light sticky-top"><tr><th>备注名</th><th>厂商</th><th>角色</th><th>地址 (IP:Port)</th><th>用户名</th><th>操作</th></tr></thead>
                         <tbody id="switch_list_body"></tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="editSwitchModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">修改设备参数</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit_switch_id">
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">备注名称</label>
+                        <input type="text" class="form-control form-control-sm" id="edit_name">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">厂商</label>
+                        <select class="form-select form-select-sm" id="edit_vendor">
+                            <option value="h3c">H3C (华三)</option>
+                            <option value="huawei">Huawei (华为)</option>
+                            <option value="ruijie">Ruijie (锐捷)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">角色</label>
+                        <select class="form-select form-select-sm" id="edit_role">
+                            <option value="access">接入交换机</option>
+                            <option value="backup">备份设备</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">IP 地址</label>
+                        <input type="text" class="form-control form-control-sm" id="edit_ip">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted">SSH 端口</label>
+                        <input type="number" class="form-control form-control-sm" id="edit_port" value="22">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted">用户名</label>
+                        <input type="text" class="form-control form-control-sm" id="edit_user">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted">密码</label>
+                        <input type="password" class="form-control form-control-sm" id="edit_pass">
+                    </div>
+                </div>
+                <div class="alert alert-warning py-2 mt-3 mb-0 small">
+                    修改 IP 后，已绑定终端列表中该设备的历史绑定记录会同步改为新 IP。
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="saveSwitchEdit()">保存修改</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="alarmCenterModal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> 告警中心</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-light border small">
+                    默认按“采集失败/高风险、风险分、严重数、告警数、最新时间”排序。Top 10 只是优先处理建议，下方完整列表仍可筛选查看，避免漏掉其他设备。
+                </div>
+                <div id="alarm_dashboard_summary" class="alarm-overview mb-3"></div>
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                    <select class="form-select form-select-sm" id="alarm_dashboard_filter" style="max-width:180px;" onchange="renderAlarmDashboardDevices()">
+                        <option value="all">全部设备</option>
+                        <option value="high">高风险</option>
+                        <option value="medium">中风险</option>
+                        <option value="low">低风险</option>
+                        <option value="failed">采集失败</option>
+                        <option value="has_ports">有高频端口</option>
+                        <option value="open">未处理</option>
+                        <option value="ack">已确认</option>
+                        <option value="ignored">已忽略</option>
+                    </select>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="loadAlarmDashboard()">刷新</button>
+                    <span class="small text-muted" id="alarm_dashboard_rule"></span>
+                </div>
+                <h6 class="fw-bold">优先处理 Top 10</h6>
+                <div id="alarm_dashboard_top" class="mb-3"></div>
+                <h6 class="fw-bold">近 7 天趋势</h6>
+                <div id="alarm_dashboard_trends" class="mb-3"></div>
+                <h6 class="fw-bold">完整设备列表</h6>
+                <div id="alarm_dashboard_devices"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="taskCenterModal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title"><i class="bi bi-list-task"></i> 任务中心</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="task_summary" class="row g-2 mb-3"></div>
+                <div class="alert alert-light border small py-2">
+                    任务名说明：<b>终端更新（汇总）</b>表示一次完整更新任务的总体结果；<b>终端更新（单台设备）</b>表示某一台交换机的扫描结果，主要用于定位失败设备。
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped align-middle">
+                        <thead><tr><th>时间</th><th>任务</th><th>目标</th><th>结果</th><th>详情</th></tr></thead>
+                        <tbody id="task_center_body"><tr><td colspan="5" class="text-center text-muted">正在加载...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="dataPackageModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="bi bi-database-down"></i> 数据备份与恢复</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    数据包包含 <code>net_assets.db</code> 和 <code>net_assets.key</code>。这两者必须成对保存，否则加密后的交换机密码无法解密。数据包属于敏感文件，请只保存在可信位置。
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="border rounded p-3 h-100">
+                            <h6 class="fw-bold">导出完整数据包</h6>
+                            <p class="text-muted small">包含数据库、密钥、交换机资产 CSV、已绑定终端 CSV 和 manifest。</p>
+                            <a class="btn btn-primary btn-sm" href="/api/data_export">
+                                <i class="bi bi-download"></i> 导出 ZIP 数据包
+                            </a>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="border rounded p-3 h-100">
+                            <h6 class="fw-bold text-danger">导入完整数据包</h6>
+                            <p class="text-muted small">导入会替换当前数据库和密钥；系统会先自动备份当前文件。</p>
+                            <input type="file" class="form-control form-control-sm mb-2" id="data_import_file" accept=".zip">
+                            <button class="btn btn-outline-primary btn-sm me-1" onclick="previewDataPackage()">
+                                <i class="bi bi-search"></i> 预览数据包
+                            </button>
+                            <button class="btn btn-danger btn-sm" onclick="importDataPackage()">
+                                <i class="bi bi-upload"></i> 导入并替换当前数据
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div id="data_package_result" class="text-muted small mt-3"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="healthModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title"><i class="bi bi-heart-pulse"></i> 运行健康检查</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="health_check_body" class="mb-3">正在检查...</div>
+                <div class="d-flex gap-2 mb-3">
+                    <button class="btn btn-outline-primary btn-sm" onclick="runDeepHealthCheck()">深度在线检查(前10台)</button>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="offlineImportBindings(false)">预览离线绑定导入</button>
+                    <button class="btn btn-outline-danger btn-sm" onclick="offlineImportBindings(true)">执行离线绑定导入</button>
+                </div>
+                <div class="input-group input-group-sm mb-3">
+                    <span class="input-group-text">日志交换机IP</span>
+                    <input type="text" class="form-control" id="alarm_switch_ip" placeholder="如 10.139.100.205">
+                    <button class="btn btn-outline-dark" onclick="collectSwitchAlarmLogs()">采集并分析日志</button>
+                    <button class="btn btn-outline-secondary" onclick="loadSwitchAlarmReports()">查看最近分析</button>
+                </div>
+                <div id="health_extra_body" class="mb-3"></div>
+                <h6 class="fw-bold">系统参数</h6>
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted">终端更新单台超时(秒)</label>
+                        <input type="number" class="form-control form-control-sm" id="setting_mac_sync_timeout" min="10" max="600">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted">终端更新并发数</label>
+                        <input type="number" class="form-control form-control-sm" id="setting_mac_sync_max_workers" min="1" max="16">
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <button class="btn btn-success btn-sm w-100" onclick="saveAdvancedSettings()">保存参数</button>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small text-muted">端口保护关键词（逗号分隔）</label>
+                        <input type="text" class="form-control form-control-sm" id="setting_protected_keywords">
+                    </div>
+                    <div class="col-12">
+                        <div class="schedule-panel">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div class="fw-bold"><i class="bi bi-clock-history text-warning"></i> 定时任务</div>
+                                <div class="small text-muted">每天按设定时间执行</div>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-md-3 col-6">
+                                    <label class="form-label small text-muted">自动备份</label>
+                                    <input type="time" class="form-control form-control-sm" id="setting_auto_backup_time">
+                                </div>
+                                <div class="col-md-3 col-6">
+                                    <label class="form-label small text-muted">终端更新</label>
+                                    <input type="time" class="form-control form-control-sm" id="setting_auto_sync_time">
+                                </div>
+                                <div class="col-md-3 col-6">
+                                    <label class="form-label small text-muted">数据包导出</label>
+                                    <input type="time" class="form-control form-control-sm" id="setting_auto_data_export_time">
+                                </div>
+                                <div class="col-md-3 col-6">
+                                    <label class="form-label small text-muted">日志采集</label>
+                                    <input type="time" class="form-control form-control-sm" id="setting_auto_alarm_collect_time">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">数据包导出目录</label>
+                        <input type="text" class="form-control form-control-sm" id="setting_auto_data_export_dir">
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="setting_auto_data_export_enabled">
+                            <label class="form-check-label" for="setting_auto_data_export_enabled">启用自动导出数据包</label>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="setting_auto_alarm_collect_enabled">
+                            <label class="form-check-label" for="setting_auto_alarm_collect_enabled">启用每日自动采集并分析交换机日志</label>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -339,14 +948,150 @@
 
 <script>
     let switchData = []; 
+    let lastTerminalBinding = null;
+    let macSyncPollTimer = null;
+    let lastMacBindingsRows = [];
+    let backupFiles = [];
+    let alarmDashboardRows = [];
+
+    function formatScheduleTime(hour, minute) {
+        return `${String(hour ?? 0).padStart(2, '0')}:${String(minute ?? 0).padStart(2, '0')}`;
+    }
+
+    function parseScheduleTime(value, defaultHour, defaultMinute) {
+        const parts = String(value || '').split(':');
+        const hour = Number(parts[0]);
+        const minute = Number(parts[1]);
+        return {
+            hour: Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : defaultHour,
+            minute: Number.isInteger(minute) && minute >= 0 && minute <= 59 ? minute : defaultMinute
+        };
+    }
+
+    function riskLabel(level) {
+        return {high: '高风险', medium: '中风险', low: '低风险', normal: '正常', failed: '采集失败'}[level || 'normal'] || level;
+    }
+
+    function renderAlarmDeviceCard(item, index, compact = false) {
+        const risk = item.dashboard_risk || item.risk_level || 'normal';
+        const categories = Object.entries(item.category_counts || {}).map(([name, count]) => `<span class="badge bg-secondary me-1">${name} ${count}</span>`).join('');
+        const ports = (item.top_ports || []).slice(0, 5).map(p => `<span class="badge bg-dark me-1">${p.port} x${p.count}</span>`).join('');
+        const suggestions = (item.suggestions || []).filter(text => !String(text).startsWith('高频端口：')).slice(0, compact ? 1 : 3).join('<br>');
+        const collapseId = `alarmCenterDetail${compact ? 'Top' : 'All'}${item.id || index}`;
+        const matched = (item.matched_lines || []).slice(-30);
+        const matchedHtml = matched.map(log => {
+            const levelClass = log.level === 'critical' ? 'text-danger' : 'text-warning';
+            const portText = (log.ports || []).length ? ` [${log.ports.join(',')}]` : '';
+            return `<div class="${levelClass} small font-monospace">[${log.category || log.level}]${portText} ${log.line || ''}</div>`;
+        }).join('');
+        const commands = (item.commands || []).map(cmd => `<div class="small"><code>${cmd.cmd}</code>：${cmd.desc}</div>`).join('');
+        const state = item.alarm_state || 'open';
+        const stateBadge = state === 'ack' ? '<span class="badge bg-primary">已确认</span>' : (state === 'ignored' ? '<span class="badge bg-secondary">已忽略</span>' : '<span class="badge bg-danger">未处理</span>');
+        const noteHtml = item.alarm_note ? `<div class="small text-muted mt-1">备注：${item.alarm_note} ${item.state_updated_by ? ' | ' + item.state_updated_by : ''} ${item.state_update_time || ''}</div>` : '';
+        return `<div class="alarm-device-card ${risk}">
+            <div class="d-flex justify-content-between gap-2">
+                <div>
+                    <div class="fw-bold">${item.switch_name || item.switch_ip} <span class="text-muted fw-normal">${item.switch_ip}</span> ${stateBadge}</div>
+                    <div class="small text-muted">${item.timestamp || '-'} | ${item.status || '-'} | 优先级 ${item.priority_score || 0}</div>
+                </div>
+                <div class="text-end">
+                    <span class="badge ${risk === 'high' ? 'bg-danger' : (risk === 'medium' ? 'bg-warning text-dark' : (risk === 'failed' ? 'bg-secondary' : 'bg-success'))}">${riskLabel(risk)}</span>
+                    <div class="small text-muted">风险分 ${item.risk_score || 0}</div>
+                </div>
+            </div>
+            <div class="small mt-2">总行数 ${item.total_lines || 0}，严重 ${item.critical_count || 0}，告警 ${item.warning_count || 0}</div>
+            <div class="mt-1">${categories || '<span class="small text-muted">无明显分类告警</span>'}</div>
+            <div class="mt-1">${ports || ''}</div>
+            <div class="small mt-2">${item.error || suggestions || '未发现明显严重告警关键字。'}</div>
+            ${noteHtml}
+            ${compact ? '' : `<div class="d-flex flex-wrap gap-2 mt-2">
+                <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}">展开详情/命令/日志</button>
+                <button class="btn btn-outline-success btn-sm" onclick="updateAlarmState('${item.switch_ip}', 'ack')">确认</button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="updateAlarmState('${item.switch_ip}', 'ignored')">忽略</button>
+                <button class="btn btn-outline-dark btn-sm" onclick="updateAlarmState('${item.switch_ip}', 'open')">重新打开</button>
+            </div>
+            <div class="collapse mt-2" id="${collapseId}">
+                <div class="border rounded bg-light p-2 mb-2"><b>建议排查命令</b>${commands || '<div class="small text-muted">暂无针对性命令建议。</div>'}</div>
+                <div class="border rounded bg-white p-2" style="max-height:260px; overflow:auto;">${matchedHtml || '<span class="small text-muted">无匹配原始日志。</span>'}</div>
+            </div>`}
+        </div>`;
+    }
 
     document.addEventListener("DOMContentLoaded", function() {
         if (typeof bootstrap === 'undefined') alert("无法加载本地 Bootstrap JS！请检查 static 目录。");
         loadSwitches(); 
         loadDashboardStats(); // 自动加载数据看板
+        loadDashboardAlarmSummary();
+        loadVersionInfo(true);
+        refreshMacSyncStatus(true);
     });
 
+    async function loadVersionInfo(quiet = false) {
+        try {
+            const response = await fetch('/api/version');
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') return;
+            const info = result.data;
+            const badge = document.getElementById('app_version_badge');
+            if (badge) badge.innerText = `v${info.version}`;
+            const body = document.getElementById('version_info_body');
+            if (!body || quiet) return;
+            const featureItems = (info.features || []).map(item => `<li>${item}</li>`).join('');
+            const updateItems = (info.updates || []).map(item => `<li>${item}</li>`).join('');
+            const autoSaveChecked = info.settings && info.settings.auto_save_after_backup ? 'checked' : '';
+            body.innerHTML = `
+                <div class="mb-3">
+                    <h4 class="fw-bold mb-1">${info.name || 'NetMaster'} <span class="badge bg-primary">v${info.version}</span></h4>
+                    <div class="text-muted">发布日期：${info.release_date || '-'}</div>
+                </div>
+                <div class="alert alert-light border">${info.summary || ''}</div>
+                <div class="card border-warning mb-3">
+                    <div class="card-body py-2">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="setting_auto_save_after_backup"
+                                   ${autoSaveChecked} onchange="saveAutoBackupSetting(this.checked)">
+                            <label class="form-check-label fw-bold" for="setting_auto_save_after_backup">定时备份成功后自动保存设备配置</label>
+                        </div>
+                        <div class="text-muted small mt-1">关闭后，凌晨备份只读取并保存配置文件，不再向交换机下发 save 命令。</div>
+                    </div>
+                </div>
+                <h6 class="fw-bold text-primary">当前版本功能</h6>
+                <ul>${featureItems}</ul>
+                <h6 class="fw-bold text-success mt-3">本版本更新内容</h6>
+                <ul>${updateItems}</ul>
+                <div class="text-muted mt-3" style="font-size:0.9rem;">当前备份目录：${info.backup || '-'}</div>
+            `;
+        } catch (error) {
+            console.error('版本信息加载失败', error);
+            if (!quiet) {
+                const body = document.getElementById('version_info_body');
+                if (body) body.innerHTML = '<span class="text-danger">版本信息加载失败</span>';
+            }
+        }
+    }
+
     // === 📊 加载数据看板 ===
+    async function saveAutoBackupSetting(enabled) {
+        try {
+            const response = await fetch('/api/settings/update', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({auto_save_after_backup: enabled})
+            });
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') {
+                alert(`系统设置保存失败: ${result.msg}`);
+                await loadVersionInfo();
+            }
+        } catch (error) {
+            console.error(error);
+            alert('系统设置保存失败，请检查后端服务');
+            await loadVersionInfo();
+        }
+    }
+
     async function loadDashboardStats() {
         try {
             const response = await fetch('/api/dashboard_stats');
@@ -488,7 +1233,7 @@
     // === 核心层：通用 API 请求 ===
     async function apiCall(endpoint, data, taskMessage = "Processing request") {
         let payload = {};
-        const device_actions = ['/test_connection', '/get_interfaces', '/get_port_info', '/bind_port', '/del_port_binding', '/save_config', '/get_acl', '/add_acl', '/del_acl'];
+        const device_actions = ['/test_connection', '/get_interfaces', '/get_port_info', '/set_interface_description', '/bind_port', '/del_port_binding', '/save_config', '/get_acl', '/add_acl', '/del_acl'];
 
         if (device_actions.includes(endpoint)) {
             const ip = document.getElementById('sw_ip').value;
@@ -532,24 +1277,92 @@
     }
 
 // === 资产管理 (修复：下拉框精准绑定 ID) ===
+    function compareIp(a, b) {
+        const pa = String(a || '').split('.').map(n => parseInt(n, 10) || 0);
+        const pb = String(b || '').split('.').map(n => parseInt(n, 10) || 0);
+        for (let i = 0; i < 4; i++) {
+            if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+        }
+        return 0;
+    }
+
+    async function loadDashboardAlarmSummary() {
+        const highEl = document.getElementById('dash_alarm_high');
+        const detailEl = document.getElementById('dash_alarm_detail');
+        const cardEl = document.getElementById('dash_alarm_card');
+        if (!highEl || !detailEl || !cardEl) return;
+        try {
+            const response = await fetch('/api/alarm_dashboard');
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.msg || '加载失败');
+            const s = result.data.summary || {};
+            const high = s.high || 0;
+            const medium = s.medium || 0;
+            const failed = s.failed || 0;
+            highEl.innerText = `${high} 高危`;
+            detailEl.innerText = `中风险 ${medium}，采集失败 ${failed}，已采集 ${s.total || 0} 台`;
+            if (high > 0 || failed > 0) {
+                cardEl.style.background = 'linear-gradient(135deg, #8b1e1e 0%, #dc3545 100%)';
+            } else if (medium > 0) {
+                cardEl.style.background = 'linear-gradient(135deg, #8a5a00 0%, #ffc107 100%)';
+            } else {
+                cardEl.style.background = 'linear-gradient(135deg, #0f5132 0%, #198754 100%)';
+                highEl.innerText = '无高危';
+            }
+        } catch (error) {
+            highEl.innerText = '未知';
+            detailEl.innerText = '告警加载失败';
+        }
+    }
+
+    function sortSwitches(list) {
+        const key = document.getElementById('switch_sort_key')?.value || 'name';
+        const roleOrder = {access: 1, backup: 2};
+        return [...list].sort((a, b) => {
+            if (key === 'ip') return compareIp(a.ip, b.ip);
+            if (key === 'role') {
+                const diff = (roleOrder[a.role || 'access'] || 9) - (roleOrder[b.role || 'access'] || 9);
+                if (diff !== 0) return diff;
+            }
+            if (key === 'vendor') {
+                const diff = String(a.vendor || 'h3c').localeCompare(String(b.vendor || 'h3c'), 'zh-CN');
+                if (diff !== 0) return diff;
+            }
+            return String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN');
+        });
+    }
+
     async function loadSwitches() {
         const response = await fetch('/api/switches');
         if (response.redirected) { window.location.href = response.url; return; }
         const result = await response.json();
         
-        switchData = result.data.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-CN'));
+        switchData = result.data || [];
+        renderSwitchTable();
+    }
+
+    function renderSwitchTable() {
+        const sortedSwitches = sortSwitches(switchData);
         
         const select = document.getElementById('saved_switches');
         const tbody = document.getElementById('switch_list_body');
+        const migrateSelect = document.getElementById('migrate_target_switch');
+        const roamSourceSelect = document.getElementById('roam_source_switch');
         
         select.innerHTML = '<option value="">-- 请选择设备或手动输入 --</option>';
         tbody.innerHTML = '';
+        if (migrateSelect) migrateSelect.innerHTML = '<option value="">-- 请选择目标交换机 --</option>';
+        if (roamSourceSelect) roamSourceSelect.innerHTML = '<option value="">-- 不确定时才留空全网查找 --</option>';
         
-        switchData.forEach((sw) => {
+        sortedSwitches.forEach((sw) => {
             const vendorTag = sw.vendor ? sw.vendor.toUpperCase() : 'H3C';
+            const role = sw.role === 'backup' ? 'backup' : 'access';
             
             // 💡 核心修复：把 value 改为 sw.id，彻底解决排序导致的错位问题
             select.innerHTML += `<option value="${sw.id}">[${vendorTag}] ${sw.name} - ${sw.ip}</option>`;
+            if (migrateSelect) migrateSelect.innerHTML += `<option value="${sw.ip}">[${vendorTag}] ${sw.name} - ${sw.ip}</option>`;
+            if (roamSourceSelect) roamSourceSelect.innerHTML += `<option value="${sw.ip}">[${vendorTag}] ${sw.name} - ${sw.ip}</option>`;
             
             let badgeClass = 'bg-secondary';
             if (sw.vendor === 'h3c') badgeClass = 'bg-primary';            
@@ -560,9 +1373,19 @@
                 <tr>
                     <td>${sw.name}</td>
                     <td><span class="badge ${badgeClass}">${vendorTag}</span></td>
+                    <td>
+                        <select class="form-select form-select-sm" onchange="updateSwitchMetadata(${sw.id}, this.value)"
+                                title="接入交换机参与终端更新；备份设备只参与配置备份">
+                            <option value="access" ${role === 'access' ? 'selected' : ''}>接入交换机</option>
+                            <option value="backup" ${role === 'backup' ? 'selected' : ''}>备份设备</option>
+                        </select>
+                    </td>
                     <td>${sw.ip}:${sw.port}</td>
                     <td>${sw.username}</td>
-                    <td><button class="btn btn-outline-danger btn-sm" onclick="delSwitch(${sw.id})"><i class="bi bi-trash"></i></button></td>
+                    <td>
+                        <button class="btn btn-outline-primary btn-sm me-1" onclick="openEditSwitch(${sw.id})" title="修改设备参数"><i class="bi bi-pencil-square"></i></button>
+                        <button class="btn btn-outline-danger btn-sm" onclick="delSwitch(${sw.id})" title="删除设备"><i class="bi bi-trash"></i></button>
+                    </td>
                 </tr>`;
         });
     }
@@ -589,7 +1412,8 @@
             ip: document.getElementById('new_ip').value,
             port: document.getElementById('new_port').value,
             user: document.getElementById('new_user').value,
-            pass: document.getElementById('new_pass').value
+            pass: document.getElementById('new_pass').value,
+            role: document.getElementById('new_role').value
         };
         if(!d.ip || !d.pass) return alert("IP 和 密码必填");
         const res = await apiCall('/api/switches/add', d, "正在添加新设备到数据库...");
@@ -598,6 +1422,26 @@
             document.getElementById('new_name').value = '';
             document.getElementById('new_ip').value = '';
             document.getElementById('new_pass').value = '';
+        }
+    }
+
+    async function updateSwitchMetadata(id, role) {
+        const payload = {id, role};
+        try {
+            const response = await fetch('/api/switches/update_metadata', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') {
+                alert(`更新失败: ${result.msg}`);
+            }
+            loadSwitches();
+        } catch (error) {
+            console.error(error);
+            alert('更新设备资产属性失败');
         }
     }
 
@@ -626,6 +1470,414 @@
             console.error(error);
             finishProgress();
             alert("网络请求失败！");
+        }
+    }
+
+    function openEditSwitch(id) {
+        const sw = switchData.find(s => s.id == id);
+        if (!sw) return alert('未找到设备记录，请刷新后重试');
+        document.getElementById('edit_switch_id').value = sw.id;
+        document.getElementById('edit_name').value = sw.name || '';
+        document.getElementById('edit_vendor').value = sw.vendor || 'h3c';
+        document.getElementById('edit_role').value = sw.role === 'backup' ? 'backup' : 'access';
+        document.getElementById('edit_ip').value = sw.ip || '';
+        document.getElementById('edit_port').value = sw.port || 22;
+        document.getElementById('edit_user').value = sw.username || '';
+        document.getElementById('edit_pass').value = sw.password || '';
+        new bootstrap.Modal(document.getElementById('editSwitchModal')).show();
+    }
+
+    async function saveSwitchEdit() {
+        const payload = {
+            id: document.getElementById('edit_switch_id').value,
+            name: document.getElementById('edit_name').value,
+            vendor: document.getElementById('edit_vendor').value,
+            role: document.getElementById('edit_role').value,
+            ip: document.getElementById('edit_ip').value,
+            port: document.getElementById('edit_port').value,
+            user: document.getElementById('edit_user').value,
+            pass: document.getElementById('edit_pass').value
+        };
+        if (!payload.name || !payload.ip || !payload.user) return alert('设备名称、IP、用户名不能为空');
+        const res = await apiCall('/api/switches/update', payload, '正在修改设备参数...');
+        if (res && res.status === 'success') {
+            bootstrap.Modal.getInstance(document.getElementById('editSwitchModal'))?.hide();
+            await loadSwitches();
+        }
+    }
+
+    async function loadTaskCenter() {
+        const tbody = document.getElementById('task_center_body');
+        const summaryBox = document.getElementById('task_summary');
+        if (!tbody || !summaryBox) return;
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">正在加载任务...</td></tr>';
+        summaryBox.innerHTML = '';
+        try {
+            const response = await fetch('/api/task_center?limit=300');
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.msg || '加载失败');
+            const summary = result.data.summary || {};
+            const taskOrder = ['终端更新（汇总）', '终端更新（单台设备）', '定时自动备份', '定时单台备份', '定时备份后保存配置', '定时采集交换机日志告警', '自动导出数据包'];
+            Object.entries(summary).sort((a, b) => {
+                const ia = taskOrder.indexOf(a[0]);
+                const ib = taskOrder.indexOf(b[0]);
+                return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib) || a[0].localeCompare(b[0], 'zh-CN');
+            }).forEach(([action, item]) => {
+                summaryBox.innerHTML += `
+                    <div class="col-md-4">
+                        <div class="task-summary-card">
+                            <div class="fw-bold">${action}</div>
+                            <div class="metric">总数 ${item.total}，成功 ${item.success}，失败 ${item.failed}，其他 ${item.partial}</div>
+                        </div>
+                    </div>`;
+            });
+            const logs = result.data.logs || [];
+            tbody.innerHTML = logs.length ? '' : '<tr><td colspan="5" class="text-center text-muted">暂无任务记录</td></tr>';
+            logs.forEach(log => {
+                const badge = log.status === '成功' ? 'bg-success' : (String(log.status).includes('失败') ? 'bg-danger' : 'bg-warning text-dark');
+                tbody.innerHTML += `
+                    <tr>
+                        <td class="text-nowrap">${log.timestamp}</td>
+                        <td class="fw-bold">${log.display_action || log.action}</td>
+                        <td>${log.device_ip}</td>
+                        <td><span class="badge ${badge}">${log.status}</span></td>
+                        <td style="max-width:520px; word-break:break-all;">${log.details || ''}</td>
+                    </tr>`;
+            });
+        } catch (error) {
+            console.error(error);
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger">任务中心加载失败</td></tr>';
+        }
+    }
+
+    async function loadAlarmDashboard() {
+        const summaryBox = document.getElementById('alarm_dashboard_summary');
+        const topBox = document.getElementById('alarm_dashboard_top');
+        const listBox = document.getElementById('alarm_dashboard_devices');
+        const trendBox = document.getElementById('alarm_dashboard_trends');
+        if (!summaryBox || !topBox || !listBox) return;
+        summaryBox.innerHTML = '<div class="text-muted small">正在加载告警中心...</div>';
+        topBox.innerHTML = '';
+        listBox.innerHTML = '';
+        try {
+            const response = await fetch('/api/alarm_dashboard');
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.msg || '加载失败');
+            const data = result.data || {};
+            const s = data.summary || {};
+            alarmDashboardRows = data.devices || [];
+            document.getElementById('alarm_dashboard_rule').innerText = data.sort_rule || '';
+            summaryBox.innerHTML = `
+                <div class="alarm-tile bg-dark"><div class="num">${s.total || 0}</div><div class="label">已采集设备</div></div>
+                <div class="alarm-tile bg-danger"><div class="num">${s.high || 0}</div><div class="label">高风险</div></div>
+                <div class="alarm-tile bg-warning text-dark"><div class="num">${s.medium || 0}</div><div class="label">中风险</div></div>
+                <div class="alarm-tile bg-info text-dark"><div class="num">${s.low || 0}</div><div class="label">低风险</div></div>
+                <div class="alarm-tile bg-success"><div class="num">${s.normal || 0}</div><div class="label">正常</div></div>
+                <div class="alarm-tile bg-secondary"><div class="num">${s.failed || 0}</div><div class="label">采集失败</div></div>
+                <div class="alarm-tile bg-primary"><div class="num">${s.ack || 0}</div><div class="label">已确认</div></div>
+                <div class="alarm-tile bg-secondary"><div class="num">${s.ignored || 0}</div><div class="label">已忽略</div></div>`;
+            if (trendBox) {
+                const trends = data.trends || [];
+                trendBox.innerHTML = trends.length ? `<div class="table-responsive"><table class="table table-sm table-bordered align-middle mb-0">
+                    <thead><tr><th>日期</th><th>高</th><th>中</th><th>低</th><th>正常</th><th>失败</th></tr></thead>
+                    <tbody>${trends.map(t => `<tr><td>${t.day}</td><td class="text-danger fw-bold">${t.high || 0}</td><td>${t.medium || 0}</td><td>${t.low || 0}</td><td>${t.normal || 0}</td><td>${t.failed || 0}</td></tr>`).join('')}</tbody>
+                </table></div>` : '<div class="alert alert-light border py-2">暂无趋势数据。</div>';
+            }
+            topBox.innerHTML = (data.top_devices || []).length
+                ? (data.top_devices || []).map((item, index) => renderAlarmDeviceCard(item, index, true)).join('')
+                : '<div class="alert alert-light border">暂无告警分析记录。</div>';
+            renderAlarmDashboardDevices();
+        } catch (error) {
+            summaryBox.innerHTML = '<div class="alert alert-danger">告警中心加载失败。</div>';
+        }
+    }
+
+    function renderAlarmDashboardDevices() {
+        const listBox = document.getElementById('alarm_dashboard_devices');
+        const filter = document.getElementById('alarm_dashboard_filter')?.value || 'all';
+        if (!listBox) return;
+        let rows = alarmDashboardRows || [];
+        if (filter !== 'all') {
+            rows = rows.filter(item => {
+                const risk = item.dashboard_risk || item.risk_level || 'normal';
+                if (filter === 'has_ports') return (item.top_ports || []).length > 0;
+                if (['open', 'ack', 'ignored'].includes(filter)) return (item.alarm_state || 'open') === filter;
+                return risk === filter;
+            });
+        }
+        listBox.innerHTML = rows.length
+            ? rows.map((item, index) => renderAlarmDeviceCard(item, index, false)).join('')
+            : '<div class="alert alert-light border">当前筛选条件下没有设备。</div>';
+    }
+
+    async function updateAlarmState(switchIp, state) {
+        const note = prompt(state === 'ack' ? '请输入确认备注（可留空）' : (state === 'ignored' ? '请输入忽略原因（建议填写）' : '请输入重新打开原因（可留空）'), '');
+        if (note === null) return;
+        try {
+            const response = await fetch('/api/alarm_state/update', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({switch_ip: switchIp, state, note})
+            });
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.msg || '更新失败');
+            await loadAlarmDashboard();
+            await loadDashboardAlarmSummary();
+        } catch (error) {
+            alert('更新告警状态失败，请检查后端服务');
+        }
+    }
+
+    async function loadHealthCheck() {
+        const body = document.getElementById('health_check_body');
+        if (!body) return;
+        body.innerHTML = '正在检查...';
+        try {
+            const response = await fetch('/api/health_check');
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.msg || '检查失败');
+            const data = result.data;
+            body.innerHTML = '<div class="health-summary-grid"></div>';
+            const grid = body.querySelector('.health-summary-grid');
+            (data.checks || []).forEach(item => {
+                const klass = item.status === 'success' ? '' : 'warning';
+                grid.innerHTML += `<div class="health-summary-item ${klass}">
+                    <div class="name">${item.name}</div>
+                    <div class="detail">${item.detail}</div>
+                </div>`;
+            });
+            const settings = data.settings || {};
+            document.getElementById('setting_mac_sync_timeout').value = settings.mac_sync_timeout || 90;
+            document.getElementById('setting_mac_sync_max_workers').value = settings.mac_sync_max_workers || 4;
+            document.getElementById('setting_protected_keywords').value = settings.protected_keywords || '';
+            document.getElementById('setting_auto_backup_time').value = formatScheduleTime(settings.auto_backup_hour ?? 2, settings.auto_backup_minute ?? 37);
+            document.getElementById('setting_auto_sync_time').value = formatScheduleTime(settings.auto_sync_hour ?? 3, settings.auto_sync_minute ?? 20);
+            document.getElementById('setting_auto_data_export_time').value = formatScheduleTime(settings.auto_data_export_hour ?? 4, settings.auto_data_export_minute ?? 10);
+            document.getElementById('setting_auto_data_export_dir').value = settings.auto_data_export_dir || 'data_packages';
+            document.getElementById('setting_auto_data_export_enabled').checked = !!settings.auto_data_export_enabled;
+            document.getElementById('setting_auto_alarm_collect_time').value = formatScheduleTime(settings.auto_alarm_collect_hour ?? 4, settings.auto_alarm_collect_minute ?? 40);
+            document.getElementById('setting_auto_alarm_collect_enabled').checked = !!settings.auto_alarm_collect_enabled;
+        } catch (error) {
+            console.error(error);
+            body.innerHTML = '<div class="alert alert-danger">健康检查失败，请检查后端服务。</div>';
+        }
+    }
+
+    async function importDataPackage() {
+        const fileInput = document.getElementById('data_import_file');
+        const resultBox = document.getElementById('data_package_result');
+        if (!fileInput.files.length) return alert('请选择 ZIP 数据包');
+        if (!confirm('导入会替换当前 net_assets.db 和 net_assets.key。系统会先自动备份当前文件，但导入后建议立即重启服务。确定继续吗？')) return;
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        resultBox.innerHTML = '正在导入数据包...';
+        try {
+            const response = await fetch('/api/data_import', {method: 'POST', body: formData});
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') {
+                resultBox.innerHTML = `<span class="text-danger">导入失败：${result.msg}</span>`;
+                return;
+            }
+            resultBox.innerHTML = `<span class="text-success">${result.msg}</span><br>当前数据已备份到：${result.data.backup_dir}`;
+            alert('导入完成。请重启 run_server.py 后继续使用。');
+        } catch (error) {
+            console.error(error);
+            resultBox.innerHTML = '<span class="text-danger">导入失败，请检查后端服务。</span>';
+        }
+    }
+
+    async function previewDataPackage() {
+        const fileInput = document.getElementById('data_import_file');
+        const resultBox = document.getElementById('data_package_result');
+        if (!fileInput.files.length) return alert('请选择 ZIP 数据包');
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        resultBox.innerHTML = '正在预览数据包...';
+        try {
+            const response = await fetch('/api/data_import_preview', {method: 'POST', body: formData});
+            const result = await response.json();
+            if (result.status !== 'success') {
+                resultBox.innerHTML = `<span class="text-danger">预览失败：${result.msg}</span>`;
+                return;
+            }
+            const d = result.data;
+            resultBox.innerHTML = `
+                <div class="alert alert-light border mt-2 mb-0">
+                    <b>数据包预览</b><br>
+                    数据库: ${d.has_db ? '存在' : '缺失'}，
+                    密钥: ${d.has_key ? '存在' : '缺失'}，
+                    资产CSV: ${d.switch_csv_rows ?? '-'} 行，
+                    终端CSV: ${d.binding_csv_rows ?? '-'} 行<br>
+                    版本: ${(d.manifest && d.manifest.version) || '-'}，
+                    创建时间: ${(d.manifest && d.manifest.created_at) || '-'}
+                </div>`;
+        } catch (error) {
+            resultBox.innerHTML = '<span class="text-danger">预览失败，请检查后端服务。</span>';
+        }
+    }
+
+    async function saveAdvancedSettings() {
+        const backupTime = parseScheduleTime(document.getElementById('setting_auto_backup_time').value, 2, 37);
+        const syncTime = parseScheduleTime(document.getElementById('setting_auto_sync_time').value, 3, 20);
+        const exportTime = parseScheduleTime(document.getElementById('setting_auto_data_export_time').value, 4, 10);
+        const alarmTime = parseScheduleTime(document.getElementById('setting_auto_alarm_collect_time').value, 4, 40);
+        const payload = {
+            mac_sync_timeout: Number(document.getElementById('setting_mac_sync_timeout').value || 90),
+            mac_sync_max_workers: Number(document.getElementById('setting_mac_sync_max_workers').value || 4),
+            protected_keywords: document.getElementById('setting_protected_keywords').value || '',
+            auto_backup_hour: backupTime.hour,
+            auto_backup_minute: backupTime.minute,
+            auto_sync_hour: syncTime.hour,
+            auto_sync_minute: syncTime.minute,
+            auto_data_export_hour: exportTime.hour,
+            auto_data_export_minute: exportTime.minute,
+            auto_data_export_dir: document.getElementById('setting_auto_data_export_dir').value || 'data_packages',
+            auto_data_export_enabled: document.getElementById('setting_auto_data_export_enabled').checked,
+            auto_alarm_collect_hour: alarmTime.hour,
+            auto_alarm_collect_minute: alarmTime.minute,
+            auto_alarm_collect_enabled: document.getElementById('setting_auto_alarm_collect_enabled').checked
+        };
+        try {
+            const response = await fetch('/api/settings/update', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') return alert(`保存失败: ${result.msg}`);
+            alert('系统参数已保存');
+            loadHealthCheck();
+        } catch (error) {
+            console.error(error);
+            alert('系统参数保存失败');
+        }
+    }
+
+    async function runDeepHealthCheck() {
+        const box = document.getElementById('health_extra_body');
+        box.innerHTML = '<div class="alert alert-info">正在低并发检查前 10 台设备，请稍候...</div>';
+        try {
+            const response = await fetch('/api/deep_health_check', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({limit: 10})
+            });
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.msg || '检查失败');
+            box.innerHTML = '<h6 class="fw-bold">深度在线检查结果</h6>';
+            (result.data.results || []).forEach(item => {
+                const klass = item.status === 'success' ? 'alert-success' : 'alert-danger';
+                box.innerHTML += `<div class="alert ${klass} py-2 mb-2"><b>${item.name || item.ip}</b> ${item.ip}：${item.detail}</div>`;
+            });
+        } catch (error) {
+            box.innerHTML = '<div class="alert alert-danger">深度在线检查失败。</div>';
+        }
+    }
+
+    async function offlineImportBindings(apply) {
+        if (apply && !confirm('将从 backups 历史配置中解析绑定并写入已绑定终端列表，确定执行吗？')) return;
+        const box = document.getElementById('health_extra_body');
+        box.innerHTML = apply ? '<div class="alert alert-info">正在执行离线绑定导入...</div>' : '<div class="alert alert-info">正在预览离线绑定...</div>';
+        try {
+            const response = await fetch('/api/offline_binding_import', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({apply})
+            });
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.msg || '导入失败');
+            const d = result.data;
+            box.innerHTML = `<div class="alert alert-success">扫描文件 ${d.files} 个，原始发现绑定 ${d.found} 条，唯一终端 ${d.unique_terminals || 0} 个，重复记录 ${d.duplicates || 0} 条；新增 ${d.created}，更新 ${d.updated}，未变 ${d.unchanged}，错误 ${d.errors.length}</div>`;
+            if ((d.preview || []).length) {
+                box.innerHTML += '<div class="small text-muted mb-1">以下为去重后的前 20 条预览：</div>';
+                box.innerHTML += '<div class="table-responsive"><table class="table table-sm table-bordered"><thead><tr><th>IP</th><th>MAC</th><th>交换机</th><th>端口</th><th>VLAN</th></tr></thead><tbody>' +
+                    d.preview.slice(0, 20).map(item => `<tr><td>${item.ip}</td><td>${item.mac}</td><td>${item.switch_ip}</td><td>${item.switch_port}</td><td>${item.vlan || ''}</td></tr>`).join('') +
+                    '</tbody></table></div>';
+            }
+        } catch (error) {
+            box.innerHTML = '<div class="alert alert-danger">离线绑定导入失败。</div>';
+        }
+    }
+
+    async function collectSwitchAlarmLogs() {
+        const ip = document.getElementById('alarm_switch_ip').value.trim();
+        if (!ip) return alert('请输入交换机 IP');
+        const box = document.getElementById('health_extra_body');
+        box.innerHTML = '<div class="alert alert-info">正在采集交换机日志...</div>';
+        try {
+            const response = await fetch('/api/switch_alarm_logs', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({switch_ip: ip})
+            });
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.msg || '采集失败');
+            const a = result.data.analysis;
+            const riskClass = a.risk_level === 'high' ? 'alert-danger' : (a.risk_level === 'medium' ? 'alert-warning' : (a.risk_level === 'low' ? 'alert-info' : 'alert-success'));
+            const categories = Object.entries(a.category_counts || {}).map(([name, count]) => `<span class="badge bg-secondary me-1">${name} ${count}</span>`).join('');
+            const ports = (a.top_ports || []).map(item => `<span class="badge bg-dark me-1">${item.port} x${item.count}</span>`).join('');
+            box.innerHTML = `<div class="alert ${riskClass} border">
+                <div class="fw-bold">日志分析：${a.headline || ''}</div>
+                <div>总行数 ${a.total_lines}，严重 ${a.critical}，告警 ${a.warning}，风险分 ${a.risk_score || 0}</div>
+                <div class="mt-1">${categories || '<span class="text-muted small">无明显分类告警</span>'}</div>
+                <div class="mt-1">${ports || ''}</div>
+                <div class="small mt-2">${(a.suggestions || []).join('<br>')}</div>
+            </div>`;
+            (a.matched || []).slice(-20).forEach(item => {
+                const klass = item.level === 'critical' ? 'text-danger' : 'text-warning';
+                const portText = (item.ports || []).length ? ` [${item.ports.join(',')}]` : '';
+                box.innerHTML += `<div class="${klass} small font-monospace">[${item.category || item.level}]${portText} ${item.line}</div>`;
+            });
+        } catch (error) {
+            box.innerHTML = '<div class="alert alert-danger">日志采集失败，请检查交换机连接和权限。</div>';
+        }
+    }
+
+    async function loadSwitchAlarmReports() {
+        const box = document.getElementById('health_extra_body');
+        box.innerHTML = '<div class="alert alert-info">正在读取最近日志分析...</div>';
+        try {
+            const response = await fetch('/api/switch_alarm_reports?limit=100');
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.msg || '读取失败');
+            const rows = result.data || [];
+            if (!rows.length) {
+                box.innerHTML = '<div class="alert alert-light border">暂无日志分析记录。可先手动采集，或等待每日定时采集任务执行。</div>';
+                return;
+            }
+            box.innerHTML = '<h6 class="fw-bold">最近日志分析</h6>';
+            rows.forEach((item, index) => {
+                const klass = item.status === '成功'
+                    ? ((item.critical_count || 0) > 0 ? 'border-danger' : ((item.warning_count || 0) > 0 ? 'border-warning' : 'border-success'))
+                    : 'border-danger';
+                const suggestions = (item.suggestions || []).filter(text => !String(text).startsWith('高频端口：')).slice(0, 3).join('<br>');
+                const categories = Object.entries(item.category_counts || {}).map(([name, count]) => `${name}:${count}`).join('，');
+                const ports = (item.top_ports || []).slice(0, 5).map(p => `${p.port} x${p.count}`).join('，');
+                const collapseId = `alarmMatched${item.id || index}`;
+                const matched = (item.matched_lines || []).slice(-30);
+                const matchedHtml = matched.map(log => {
+                    const levelClass = log.level === 'critical' ? 'text-danger' : 'text-warning';
+                    const portText = (log.ports || []).length ? ` [${log.ports.join(',')}]` : '';
+                    return `<div class="${levelClass} small font-monospace">[${log.category || log.level}]${portText} ${log.line || ''}</div>`;
+                }).join('');
+                box.innerHTML += `<div class="alert alert-light ${klass} py-2 mb-2">
+                    <div><b>${item.switch_name || item.switch_ip}</b> <span class="text-muted">${item.switch_ip} ${item.timestamp}</span></div>
+                    <div>状态：${item.status}，风险：${item.risk_level || 'normal'}(${item.risk_score || 0})，总行数 ${item.total_lines || 0}，严重 ${item.critical_count || 0}，告警 ${item.warning_count || 0}</div>
+                    <div class="small text-muted">${categories ? '分类：' + categories : ''}${ports ? '<br>高频端口：' + ports : ''}</div>
+                    <div class="small">${item.error || suggestions || '未发现明显严重告警关键字。'}</div>
+                    ${matched.length ? `<button class="btn btn-outline-secondary btn-sm mt-2" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}">展开匹配原始日志(${matched.length})</button>
+                    <div class="collapse mt-2" id="${collapseId}">
+                        <div class="border rounded bg-white p-2" style="max-height:260px; overflow:auto;">${matchedHtml}</div>
+                    </div>` : ''}
+                </div>`;
+            });
+        } catch (error) {
+            box.innerHTML = '<div class="alert alert-danger">读取日志分析记录失败。</div>';
         }
     }
 
@@ -703,6 +1955,7 @@
             if(res.data.vlan && portText.includes('[Access]')) {
                 document.getElementById('vlan_id').value = res.data.vlan;
             }
+            document.getElementById('port_description').value = res.data.description || '';
             const tbody = document.getElementById('bind_table_body'); 
             tbody.innerHTML = '';
             if(res.data.bindings.length === 0) {
@@ -721,6 +1974,21 @@
                 });
             }
         }
+    }
+
+    async function savePortDescription() {
+        const select = document.getElementById('port_name');
+        if (select.selectedIndex === -1 || !select.value) return alert("请先选择端口");
+        const description = document.getElementById('port_description').value.trim();
+        const res = await apiCall('/set_interface_description', {interface: select.value, description}, `Setting description for ${select.value}`);
+        if (res && res.status === 'success') {
+            getInterfaces();
+        }
+    }
+
+    async function clearPortDescription() {
+        document.getElementById('port_description').value = '';
+        await savePortDescription();
     }
 
     async function delBinding(ip, mac, mode, vlan) {
@@ -744,20 +2012,501 @@
 
     async function saveConfig() { if(!confirm("确定要执行 save force 吗？")) return; await apiCall('/save_config', {}, "Saving configuration to switch flash"); }
     
-    async function loadAcl() {
-        const res = await apiCall('/get_acl', {}, "Fetching ACL rules");
+    async function loadAcl(loadAll = false) {
+        const aclNumber = document.getElementById('acl_number')?.value || '4000';
+        const res = await apiCall('/get_acl', {acl_number: aclNumber, all: loadAll}, loadAll ? "Fetching all ACL groups" : `Fetching ACL ${aclNumber}`);
         if(res && res.status === 'success') {
-            const tbody = document.getElementById('acl_table_body'); tbody.innerHTML = '';
-            res.data.forEach(rule => { tbody.innerHTML += `<tr><td>${rule.id}</td><td>${rule.action}</td><td>${rule.mac}</td><td><button class="btn btn-danger btn-sm" onclick="delAcl(${rule.id})">删除</button></td></tr>`; });
+            renderAclGroups(res.data.groups || []);
+        }
+    }
+
+    function renderAclGroups(groups) {
+        const tbody = document.getElementById('acl_table_body');
+        tbody.innerHTML = '';
+        if (!groups.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">未查询到 ACL 策略组</td></tr>';
+            return;
+        }
+        let rendered = 0;
+        groups.forEach(group => {
+            const rules = group.rules || [];
+            if (!rules.length) {
+                tbody.innerHTML += `<tr class="table-light"><td class="fw-bold">${group.number}</td><td>${group.type || 'ACL'}</td><td colspan="4" class="text-muted">该策略组暂无规则</td></tr>`;
+                rendered += 1;
+                return;
+            }
+            rules.forEach(rule => {
+                const aclNumber = rule.acl_number || group.number;
+                const matchText = rule.mac || rule.raw || '-';
+                tbody.innerHTML += `
+                    <tr>
+                        <td class="fw-bold">${aclNumber}</td>
+                        <td>${rule.acl_type || group.type || 'ACL'}</td>
+                        <td>${rule.id}</td>
+                        <td>${rule.action || '-'}</td>
+                        <td style="max-width:260px; word-break:break-all;">${matchText}</td>
+                        <td><button class="btn btn-danger btn-sm" onclick="delAcl('${aclNumber}', '${rule.id}')">删除</button></td>
+                    </tr>`;
+                rendered += 1;
+            });
+        });
+        if (!rendered) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">未查询到 ACL 规则</td></tr>';
         }
     }
     
     async function addAcl() {
         const mac = document.getElementById('acl_mac').value; const rule_id = document.getElementById('acl_id').value;
-        if(!mac) return alert("请输入 MAC 地址"); await apiCall('/add_acl', {mac, rule_id}, "Adding new ACL rule"); loadAcl();
+        const acl_number = document.getElementById('acl_number').value || '4000';
+        if(!mac) return alert("请输入 MAC 地址"); await apiCall('/add_acl', {mac, rule_id, acl_number}, "Adding new ACL rule"); loadAcl(false);
     }
     
-    async function delAcl(id) { if(confirm(`确定删除规则 ID ${id} 吗?`)) { await apiCall('/del_acl', {rule_id: id}, `Deleting ACL rule ${id}`); loadAcl(); } }
+    async function delAcl(aclNumber, id) {
+        if(confirm(`确定删除 ACL ${aclNumber} 的规则 ID ${id} 吗?`)) {
+            await apiCall('/del_acl', {acl_number: aclNumber, rule_id: id}, `Deleting ACL ${aclNumber} rule ${id}`);
+            loadAcl(false);
+        }
+    }
+
+    async function loadBackupFiles() {
+        try {
+            const response = await fetch('/api/backup_files?limit=1000');
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') {
+                alert(`备份列表加载失败: ${result.msg}`);
+                return;
+            }
+            backupFiles = result.data || [];
+            renderBackupFileOptions();
+        } catch (error) {
+            console.error(error);
+            alert('备份列表加载失败，请检查后端服务');
+        }
+    }
+
+    function renderBackupFileOptions() {
+        const oldSelect = document.getElementById('backup_old_select');
+        const newSelect = document.getElementById('backup_new_select');
+        if (!oldSelect || !newSelect) return;
+        const query = (document.getElementById('backup_file_search')?.value || '').trim().toLowerCase();
+        const rows = (backupFiles || []).filter(item => {
+            const text = `${item.date} ${item.device_name} ${item.device_ip} ${item.filename} ${item.path}`.toLowerCase();
+            return !query || text.includes(query);
+        });
+        const options = rows.map(item => {
+            const label = `${item.date} | ${item.device_name || item.filename} | ${item.device_ip || '-'} | ${Math.round((item.size || 0) / 1024)}KB`;
+            return `<option value="${item.path}">${label}</option>`;
+        }).join('');
+        oldSelect.innerHTML = options || '<option value="">未找到备份文件</option>';
+        newSelect.innerHTML = options || '<option value="">未找到备份文件</option>';
+        if (rows.length >= 2) {
+            newSelect.selectedIndex = 0;
+            oldSelect.selectedIndex = 1;
+        }
+    }
+
+    function renderDiffText(diffText) {
+        return String(diffText || '').replace(/[&<>]/g, ch => ({'&':'&amp;', '<':'&lt;', '>':'&gt;'}[ch]));
+    }
+
+    async function compareBackups() {
+        const oldPath = document.getElementById('backup_old_select')?.value;
+        const newPath = document.getElementById('backup_new_select')?.value;
+        const output = document.getElementById('backup_diff_output');
+        const summary = document.getElementById('backup_diff_summary');
+        if (!oldPath || !newPath) return alert('请选择两份备份文件');
+        if (oldPath === newPath) return alert('请选择不同的备份文件进行比对');
+        output.innerHTML = '正在比对本地备份文件...';
+        summary.className = 'badge bg-secondary';
+        summary.innerText = '比对中';
+        try {
+            const response = await fetch('/api/backup_diff', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({old_path: oldPath, new_path: newPath})
+            });
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') {
+                output.innerHTML = renderDiffText(result.msg || '比对失败');
+                summary.className = 'badge bg-danger';
+                summary.innerText = '失败';
+                return;
+            }
+            const data = result.data;
+            summary.className = data.changed ? 'badge bg-warning text-dark' : 'badge bg-success';
+            summary.innerText = data.changed ? `新增 ${data.additions} / 删除 ${data.deletions}` : '无差异';
+            output.innerHTML = data.diff ? renderDiffText(data.diff) : '两份配置无差异。';
+        } catch (error) {
+            console.error(error);
+            output.innerHTML = '比对失败，请检查后端服务。';
+            summary.className = 'badge bg-danger';
+            summary.innerText = '失败';
+        }
+    }
+
+    async function loadPortProfiles() {
+        const tbody = document.getElementById('port_profile_body');
+        if (!tbody) return;
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">正在加载端口画像...</td></tr>';
+        try {
+            const response = await fetch('/api/port_profiles');
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.msg || '加载失败');
+            const rows = result.data || [];
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">暂无端口画像数据，请先执行终端更新。</td></tr>';
+                return;
+            }
+            tbody.innerHTML = '';
+            rows.forEach(row => {
+                const countBadge = Number(row.terminal_count || 0) > 1 ? 'bg-warning text-dark' : 'bg-secondary';
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${row.switch_name || '-'}</td>
+                        <td>${row.switch_ip}</td>
+                        <td class="fw-bold">${row.port}</td>
+                        <td><span class="badge ${countBadge}">${row.terminal_count}</span></td>
+                        <td>${row.vlans || '-'}</td>
+                        <td>${row.modes || '-'}</td>
+                        <td>${row.last_update || '-'}</td>
+                    </tr>`;
+            });
+        } catch (error) {
+            console.error(error);
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger py-3">端口画像加载失败</td></tr>';
+        }
+    }
+
+    function renderTerminalBindingResult(binding) {
+        const box = document.getElementById('roam_lookup_result');
+        if (!binding) {
+            box.className = 'border rounded p-3 bg-light text-muted';
+            box.innerHTML = '暂未查询到终端位置';
+            return;
+        }
+        const modeBadge = binding.mode === 'trunk'
+            ? '<span class="badge bg-primary">Trunk</span>'
+            : '<span class="badge bg-secondary">Access</span>';
+        box.className = 'border rounded p-3 bg-success-subtle';
+        box.innerHTML = `
+            <div class="fw-bold text-success mb-2">已定位到终端当前位置</div>
+            <div><b>MAC:</b> ${binding.mac_address}</div>
+            <div><b>IP:</b> ${binding.ip_address}</div>
+            <div><b>交换机:</b> ${binding.switch_ip}</div>
+            <div><b>端口:</b> ${binding.port}</div>
+            <div><b>VLAN:</b> ${binding.vlan || '-'}</div>
+            <div><b>模式:</b> ${modeBadge}</div>
+            <div class="text-muted mt-2" style="font-size: 0.85rem;">最后更新时间: ${binding.update_time || '-'}</div>
+        `;
+    }
+
+    async function lookupTerminalBinding() {
+        const query = document.getElementById('roam_query').value.trim();
+        const sourceSwitchIp = document.getElementById('roam_source_switch').value;
+        if (!query) return alert('请输入 MAC 或 IP');
+        startProgress(sourceSwitchIp ? `正在从 ${sourceSwitchIp} 定位终端 ${query}` : `正在全网定位终端 ${query}`);
+        try {
+            const response = await fetch('/api/terminal_binding_lookup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({query, source_switch_ip: sourceSwitchIp})
+            });
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            finishProgress();
+            if (result.status === 'success') {
+                lastTerminalBinding = result.data;
+                renderTerminalBindingResult(lastTerminalBinding);
+                const targetMode = document.getElementById('migrate_target_mode');
+                const targetSwitch = document.getElementById('migrate_target_switch');
+                const sourceSwitch = document.getElementById('roam_source_switch');
+                if (targetMode && !targetMode.value) targetMode.value = lastTerminalBinding.mode || '';
+                if (targetSwitch) targetSwitch.value = lastTerminalBinding.switch_ip || '';
+                if (sourceSwitch && !sourceSwitch.value) sourceSwitch.value = lastTerminalBinding.switch_ip || '';
+                if (!document.getElementById('migrate_target_vlan').value) {
+                    document.getElementById('migrate_target_vlan').value = lastTerminalBinding.vlan || '';
+                }
+                const sourceText = result.source === 'live_scan' ? (sourceSwitchIp ? '单台主动扫描' : '全网主动扫描') : '已绑定终端列表';
+                document.getElementById('log_area').innerHTML = `<span style="color:#20c997;">✅ 已通过${sourceText}定位终端：${lastTerminalBinding.mac_address} -> ${lastTerminalBinding.switch_ip} / ${lastTerminalBinding.port}</span>`;
+            } else {
+                lastTerminalBinding = null;
+                renderTerminalBindingResult(null);
+                alert(`❌ 查询失败: ${result.msg}`);
+            }
+        } catch (error) {
+            console.error(error);
+            lastTerminalBinding = null;
+            renderTerminalBindingResult(null);
+            document.getElementById('log_area').innerHTML = "<span style='color: red;'>❌ 查询终端位置时发生网络错误</span>";
+        }
+    }
+
+    function renderMacSyncProgress(state) {
+        const running = !!state.running;
+        const total = Number(state.total_switches || 0);
+        const current = Number(state.current_switch_index || 0);
+        const percent = total > 0 ? Math.min(100, Math.floor((current / total) * 100)) : (running ? 10 : 100);
+        const barClass = state.status === 'error' ? 'bg-danger' : (running ? 'bg-info' : 'bg-success');
+        const switchText = total > 0 ? `${current}/${total}` : '-/-';
+        const foundText = Number(state.found || 0);
+        const changedText = Number(state.synced || 0);
+        const unchangedText = Number(state.unchanged || 0);
+        const currentTarget = state.current_switch_ip ? `${state.current_switch_name || '未命名设备'} (${state.current_switch_ip})` : '-';
+        const errors = state.errors && state.errors.length
+            ? `<div style="color:#ffc107; margin-top:8px;">最近错误：<br>${state.errors.slice(-5).join('<br>')}</div>`
+            : '';
+
+        document.getElementById('log_area').innerHTML = `
+            <div style="color:#0dcaf0; font-family:monospace; margin-bottom:10px;">
+                <i class="bi bi-hdd-network"></i> [MAC Sync] ${state.message || '终端更新'}
+            </div>
+            <div class="progress" style="height:20px; background-color:#2b3035; border-radius:0;">
+                <div class="progress-bar progress-bar-striped ${running ? 'progress-bar-animated' : ''} ${barClass}"
+                     role="progressbar" style="width:${percent}%;">${percent}%</div>
+            </div>
+            <div class="row g-2 mt-2" style="font-size:13px; font-family:monospace;">
+                <div class="col-md-4"><span class="text-muted">发现/变更/未变:</span> <span style="color:#20c997;font-weight:bold;">${foundText}/${changedText}/${unchangedText}</span></div>
+                <div class="col-md-4"><span class="text-muted">交换机进度:</span> <span style="color:#20c997;font-weight:bold;">${switchText}</span></div>
+                <div class="col-md-4"><span class="text-muted">当前设备:</span> <span style="color:#f8f9fa;">${currentTarget}</span></div>
+            </div>
+            <div class="text-muted mt-1" style="font-size:12px;">开始时间: ${state.started_at || '-'}　结束时间: ${state.finished_at || '-'}</div>
+            ${errors}
+        `;
+    }
+
+    async function refreshMacSyncStatus(quiet = false) {
+        try {
+            const response = await fetch('/api/mac_sync_status');
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') return;
+            const state = result.data;
+            if (state.running || (!quiet && state.status !== 'idle')) {
+                renderMacSyncProgress(state);
+            }
+            if (state.running) {
+                clearTimeout(macSyncPollTimer);
+                macSyncPollTimer = setTimeout(() => refreshMacSyncStatus(false), 2000);
+            } else if (!quiet && state.status !== 'idle') {
+                clearTimeout(macSyncPollTimer);
+                loadMacBindings(false);
+            }
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
+    async function syncMacBindings() {
+        if (!confirm('即将扫描资产库中的交换机端口，并把现有 IP/MAC 绑定同步到已绑定终端列表。设备较多时会耗时较长，确定继续吗？')) return;
+        try {
+            const response = await fetch('/api/sync_mac_bindings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({})
+            });
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status === 'success') {
+                document.getElementById('log_area').innerHTML = `<span style="color:#20c997;">${result.msg}</span>`;
+                refreshMacSyncStatus(false);
+            } else if (result.status === 'busy') {
+                alert(result.msg);
+                renderMacSyncProgress(result.data);
+                refreshMacSyncStatus(false);
+            } else {
+                document.getElementById('log_area').innerHTML = `<span style="color:red;">同步失败：${result.msg}</span>`;
+                alert(`同步失败：${result.msg}`);
+            }
+        } catch (error) {
+            console.error(error);
+            document.getElementById('log_area').innerHTML = "<span style='color: red;'>终端更新时发生网络错误</span>";
+        }
+    }
+
+    async function loadMacBindings(showAlert = true) {
+        const tbody = document.getElementById('mac_bindings_body');
+        const countEl = document.getElementById('mac_binding_count');
+        if (!tbody) return;
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">正在读取已绑定终端列表...</td></tr>';
+        try {
+            const response = await fetch('/api/mac_bindings?limit=1000');
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') {
+                tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger py-3">${result.msg}</td></tr>`;
+                return;
+            }
+            const rows = result.data || [];
+            lastMacBindingsRows = rows;
+            if (rows.length === 0) {
+                countEl.innerText = '共 0 条';
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">已绑定终端列表暂无终端记录，请先执行终端更新</td></tr>';
+                return;
+            }
+            renderMacBindingsRows();
+            if (showAlert) document.getElementById('log_area').innerHTML = `<span style="color:#20c997;">已加载已绑定终端列表，共 ${rows.length} 条记录。</span>`;
+        } catch (error) {
+            console.error(error);
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">读取已绑定终端列表失败</td></tr>';
+        }
+    }
+
+    function buildBindingConflictSets(rows) {
+        const ipMap = new Map();
+        const macMap = new Map();
+        rows.forEach(row => {
+            const ipKey = row.ip_address || '';
+            const macKey = row.mac_address || '';
+            const location = `${row.switch_ip || ''}|${row.port || ''}`;
+            if (!ipMap.has(ipKey)) ipMap.set(ipKey, new Set());
+            if (!macMap.has(macKey)) macMap.set(macKey, new Set());
+            ipMap.get(ipKey).add(macKey);
+            macMap.get(macKey).add(location);
+        });
+        return {
+            ipConflicts: new Set([...ipMap.entries()].filter(([, macs]) => macs.size > 1).map(([ip]) => ip)),
+            macConflicts: new Set([...macMap.entries()].filter(([, locations]) => locations.size > 1).map(([mac]) => mac)),
+        };
+    }
+
+    function renderMacBindingsRows() {
+        const tbody = document.getElementById('mac_bindings_body');
+        const countEl = document.getElementById('mac_binding_count');
+        if (!tbody) return;
+        const rows = lastMacBindingsRows || [];
+        const query = (document.getElementById('mac_binding_search')?.value || '').trim().toLowerCase();
+        const modeFilter = document.getElementById('mac_binding_mode_filter')?.value || '';
+        const conflictFilter = document.getElementById('mac_binding_conflict_filter')?.value || '';
+        const {ipConflicts, macConflicts} = buildBindingConflictSets(rows);
+
+        const filtered = rows.filter(row => {
+            if (modeFilter && row.mode !== modeFilter) return false;
+            if (conflictFilter === 'ip_conflict' && !ipConflicts.has(row.ip_address)) return false;
+            if (conflictFilter === 'mac_conflict' && !macConflicts.has(row.mac_address)) return false;
+            if (!query) return true;
+            return [
+                row.mac_address,
+                row.ip_address,
+                row.switch_name,
+                row.switch_ip,
+                row.port,
+                row.vlan,
+                row.mode,
+                row.update_time,
+            ].some(value => String(value || '').toLowerCase().includes(query));
+        });
+
+        countEl.innerText = `显示 ${filtered.length} / 共 ${rows.length} 条`;
+        if (filtered.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">没有符合条件的终端记录</td></tr>';
+            return;
+        }
+        tbody.innerHTML = '';
+        filtered.forEach(row => {
+            const modeBadge = row.mode === 'trunk'
+                ? '<span class="badge bg-primary">Trunk</span>'
+                : '<span class="badge bg-secondary">Access</span>';
+            const conflictBadge = ipConflicts.has(row.ip_address)
+                ? ' <span class="badge bg-danger">IP冲突</span>'
+                : (macConflicts.has(row.mac_address) ? ' <span class="badge bg-warning text-dark">MAC多位置</span>' : '');
+            tbody.innerHTML += `
+                <tr>
+                    <td class="fw-bold">${row.mac_address}${conflictBadge}</td>
+                    <td>${row.ip_address}</td>
+                    <td>${row.switch_name || '-'}</td>
+                    <td>${row.switch_ip}</td>
+                    <td>${row.port}</td>
+                    <td>${row.vlan || '-'}</td>
+                    <td>${modeBadge}</td>
+                    <td>${row.update_time || '-'}</td>
+                </tr>
+            `;
+        });
+    }
+
+    function exportMacBindingsCsv() {
+        if (!lastMacBindingsRows || lastMacBindingsRows.length === 0) {
+            alert('请先点击“终端列表”加载终端列表后再导出。');
+            return;
+        }
+        const headers = ['MAC', 'IP', '交换机名称', '交换机IP', '端口', 'VLAN', '模式', '加入/更新时间'];
+        const escapeCsv = (value) => {
+            const text = String(value ?? '');
+            return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+        };
+        const lines = [headers.map(escapeCsv).join(',')];
+        lastMacBindingsRows.forEach(row => {
+            lines.push([
+                row.mac_address,
+                row.ip_address,
+                row.switch_name || '',
+                row.switch_ip,
+                row.port,
+                row.vlan || '',
+                row.mode || '',
+                row.update_time || ''
+            ].map(escapeCsv).join(','));
+        });
+        const csv = '\ufeff' + lines.join('\r\n');
+        const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+        link.href = url;
+        link.download = `mac_bindings_${stamp}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+
+    async function migrateTerminal() {
+        const query = document.getElementById('roam_query').value.trim();
+        const sourceSwitchIp = document.getElementById('roam_source_switch').value;
+        const targetSwitchIp = document.getElementById('migrate_target_switch').value;
+        const targetInterface = document.getElementById('migrate_target_interface').value.trim();
+        const targetVlan = document.getElementById('migrate_target_vlan').value.trim();
+        const targetMode = document.getElementById('migrate_target_mode').value;
+        const dryRun = document.getElementById('migrate_dry_run')?.checked || false;
+
+        if (!query) return alert('请先输入 MAC 或 IP');
+        if (!targetSwitchIp || !targetInterface) return alert('请填写目标交换机和目标端口');
+        if (!lastTerminalBinding) {
+            if (!confirm('尚未先做定位查询，是否继续直接按输入条件尝试迁移？')) return;
+        }
+        const actionName = dryRun ? '终端漫游试运行' : '终端漫游';
+        if (!confirm(`即将执行${actionName}：\n查询条件: ${query}\n目标交换机: ${targetSwitchIp}\n目标端口: ${targetInterface}\n确定继续吗？`)) return;
+
+        const payload = {
+            query,
+            source_switch_ip: sourceSwitchIp,
+            target_switch_ip: targetSwitchIp,
+            target_interface: targetInterface,
+            target_vlan: targetVlan,
+            target_mode: targetMode,
+            dry_run: dryRun
+        };
+        const res = await apiCall('/api/migrate_terminal', payload, `Migrating terminal to ${targetSwitchIp} ${targetInterface}`);
+        if (res && res.status === 'success') {
+            alert(dryRun ? '终端漫游试运行完成，未下发配置' : '终端漫游完成');
+            if (dryRun) return;
+            if (res.data && res.data.target) {
+                lastTerminalBinding = {
+                    ...(lastTerminalBinding || {}),
+                    mac_address: (lastTerminalBinding && lastTerminalBinding.mac_address) || query,
+                    ip_address: (lastTerminalBinding && lastTerminalBinding.ip_address) || '',
+                    switch_ip: res.data.target.switch_ip,
+                    port: res.data.target.port,
+                    vlan: res.data.target.vlan,
+                    mode: res.data.target.mode
+                };
+                renderTerminalBindingResult(lastTerminalBinding);
+            }
+        }
+    }
 
     // === 📊 Excel 批量导入控制引擎 ===
     let parsedExcelData = []; 
@@ -814,70 +2563,88 @@
 // === 📊 Excel 核心批量执行引擎 (带终端瀑布流日志) ===
     async function executeExcelBatch() {
         if (parsedExcelData.length === 0) return alert("没有可执行的数据！");
-        if (!confirm(`即将向交换机逐条下发 ${parsedExcelData.length} 条配置。\n过程可能需要几分钟（每条约耗时2~5秒），请不要关闭或刷新本页面！\n确定开始吗？`)) return;
+        if (!confirm(`即将向交换机批量下发 ${parsedExcelData.length} 条配置。\n系统会按【交换机 + 端口】自动聚合后再下发。\n过程可能需要几分钟，请不要关闭或刷新本页面。\n确定开始吗？`)) return;
 
         const btn = document.getElementById('btn_execute_excel');
         btn.disabled = true;
-        btn.innerHTML = '⚙️ 正在排队执行中...';
+        btn.innerHTML = '⚙️ 正在聚合执行中...';
 
-        // 💡 1. 准备终端黑框
         const logBox = document.getElementById('log_area');
-        logBox.innerHTML = '<div style="color: #0dcaf0; font-family: monospace;">🚀 [System] 批量部署任务已启动，正在开启多通道 SSH 会话...</div><hr style="border-color: #444;">';
+        logBox.innerHTML = '<div style="color: #0dcaf0; font-family: monospace;">🚀 [System] 批量部署任务已启动，正在按交换机与端口聚合指令集...</div><hr style="border-color: #444;">';
 
         let successCount = 0;
         let failCount = 0;
+        const groups = [];
+        const groupMap = new Map();
 
-        for (let i = 0; i < parsedExcelData.length; i++) {
-            const rowData = parsedExcelData[i];
-            const tr = document.getElementById(`row_${i}`);
-            const statusTd = tr.querySelector('.row-status');
+        parsedExcelData.forEach((rowData, index) => {
+            const key = `${rowData.switch_ip}||${rowData.interface}`;
+            if (!groupMap.has(key)) {
+                groupMap.set(key, {key, switch_ip: rowData.switch_ip, interface: rowData.interface, rows: [], indexes: []});
+            }
+            const group = groupMap.get(key);
+            group.rows.push(rowData);
+            group.indexes.push(index);
+        });
+        groupMap.forEach(group => groups.push(group));
 
-            statusTd.innerHTML = '<span class="text-info fw-bold">⏳ 执行中...</span>';
-            tr.classList.add('table-info');
+        for (const group of groups) {
+            group.indexes.forEach((rowIndex) => {
+                const tr = document.getElementById(`row_${rowIndex}`);
+                const statusTd = tr.querySelector('.row-status');
+                statusTd.innerHTML = '<span class="text-info fw-bold">⏳ 执行中...</span>';
+                tr.classList.add('table-info');
+            });
 
             try {
-                const response = await fetch('/api/execute_excel_row', {
+                const response = await fetch('/api/execute_excel_group', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(rowData)
+                    body: JSON.stringify({rows: group.rows})
                 });
                 const result = await response.json();
 
-                tr.classList.remove('table-info');
-
                 if (result.status === 'success') {
-                    statusTd.innerHTML = '<span class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> 成功</span>';
-                    tr.classList.add('table-success'); 
-                    successCount++;
-                    
-                    // 💡 2. 成功：在终端追加绿色日志，并附带原始回显
+                    group.indexes.forEach((rowIndex) => {
+                        const tr = document.getElementById(`row_${rowIndex}`);
+                        const statusTd = tr.querySelector('.row-status');
+                        tr.classList.remove('table-info');
+                        statusTd.innerHTML = '<span class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> 成功</span>';
+                        tr.classList.add('table-success');
+                    });
+                    successCount += group.rows.length;
                     logBox.innerHTML += `
-                        <div style="color: #198754; font-weight: bold; margin-top: 10px;">✅ [${rowData.switch_ip} - ${rowData.interface}] 下发成功</div>
+                        <div style="color: #198754; font-weight: bold; margin-top: 10px;">✅ [${group.switch_ip} - ${group.interface}] 聚合下发成功，共 ${group.rows.length} 条</div>
                         <pre style="color: #20c997; margin-bottom: 0;">${result.log}</pre>
                         <hr style="border-color: #444; margin: 5px 0;">
                     `;
                 } else {
-                    statusTd.innerHTML = `<span class="text-danger fw-bold" title="${result.msg}" style="cursor:help;"><i class="bi bi-x-circle-fill"></i> 失败</span>`;
-                    tr.classList.add('table-danger'); 
-                    failCount++;
-                    
-                    // 💡 3. 失败：在终端追加红色警告日志
+                    group.indexes.forEach((rowIndex) => {
+                        const tr = document.getElementById(`row_${rowIndex}`);
+                        const statusTd = tr.querySelector('.row-status');
+                        tr.classList.remove('table-info');
+                        statusTd.innerHTML = `<span class="text-danger fw-bold" title="${result.msg}" style="cursor:help;"><i class="bi bi-x-circle-fill"></i> 失败</span>`;
+                        tr.classList.add('table-danger');
+                    });
+                    failCount += group.rows.length;
                     logBox.innerHTML += `
-                        <div style="color: #dc3545; font-weight: bold; margin-top: 10px;">❌ [${rowData.switch_ip} - ${rowData.interface}] 下发失败</div>
+                        <div style="color: #dc3545; font-weight: bold; margin-top: 10px;">❌ [${group.switch_ip} - ${group.interface}] 聚合下发失败，共 ${group.rows.length} 条</div>
                         <div style="color: #ffc107; margin-bottom: 5px;">原因: ${result.msg}</div>
                         <hr style="border-color: #444; margin: 5px 0;">
                     `;
                 }
             } catch (error) {
-                tr.classList.remove('table-info');
-                statusTd.innerHTML = '<span class="text-danger fw-bold" title="网络请求失败"><i class="bi bi-x-circle-fill"></i> 异常</span>';
-                tr.classList.add('table-danger');
-                failCount++;
-                
-                logBox.innerHTML += `<div style="color: #dc3545; font-weight: bold; margin-top: 10px;">⚠️ [${rowData.switch_ip} - ${rowData.interface}] 网络通信异常结束</div>`;
+                group.indexes.forEach((rowIndex) => {
+                    const tr = document.getElementById(`row_${rowIndex}`);
+                    const statusTd = tr.querySelector('.row-status');
+                    tr.classList.remove('table-info');
+                    statusTd.innerHTML = '<span class="text-danger fw-bold" title="网络请求失败"><i class="bi bi-x-circle-fill"></i> 异常</span>';
+                    tr.classList.add('table-danger');
+                });
+                failCount += group.rows.length;
+                logBox.innerHTML += `<div style="color: #dc3545; font-weight: bold; margin-top: 10px;">⚠️ [${group.switch_ip} - ${group.interface}] 聚合任务网络通信异常结束</div>`;
             }
             
-            // 💡 4. 让终端黑框的滚动条永远保持在最底部，形成瀑布流效果
             logBox.scrollTop = logBox.scrollHeight;
         }
 

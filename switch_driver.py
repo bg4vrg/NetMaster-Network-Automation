@@ -2,6 +2,10 @@
 import time
 from netmiko import ConnectHandler
 
+SSH_CONN_TIMEOUT = 12
+SSH_COMMAND_TIMEOUT = 25
+SSH_LONG_COMMAND_TIMEOUT = 60
+
 class H3CManager:
     def __init__(self, ip, username, password, port=22):
         self.device_info = {
@@ -11,6 +15,11 @@ class H3CManager:
             'password': password,
             'port': port,
             'global_delay_factor': 2, # 澧炲姞寤舵椂闃叉瓒呮椂
+            'conn_timeout': SSH_CONN_TIMEOUT,
+            'auth_timeout': SSH_CONN_TIMEOUT,
+            'banner_timeout': SSH_CONN_TIMEOUT,
+            'blocking_timeout': SSH_COMMAND_TIMEOUT,
+            'session_timeout': SSH_COMMAND_TIMEOUT,
         }
 
     def _get_connection(self):
@@ -55,6 +64,14 @@ class H3CManager:
                     break
                     
         return f"连接成功\n设备名称: {hostname}\n设备型号: {model}"
+
+    def get_alarm_logs(self):
+        conn = self._get_connection()
+        try:
+            output = conn.send_command("display logbuffer", read_timeout=SSH_LONG_COMMAND_TIMEOUT)
+        finally:
+            conn.disconnect()
+        return output
 
 # === 馃洜锔?缁堟瀬淇鐗堬細鑾峰彇鎺ュ彛鍒楄〃 (瑙ｅ喅 XGE 鎻忚堪涓㈠け闂) ===
     def get_interface_list(self):
@@ -120,9 +137,17 @@ class H3CManager:
 
     def get_port_info(self, interface_name):
         conn = self._get_connection()
-        output_iface = conn.send_command(f"display current-configuration interface {interface_name}")
-        output_global = conn.send_command("display ip source binding")
-        conn.disconnect()
+        try:
+            output_iface = conn.send_command(
+                f"display current-configuration interface {interface_name}",
+                read_timeout=SSH_COMMAND_TIMEOUT,
+            )
+            output_global = conn.send_command(
+                "display ip source binding",
+                read_timeout=SSH_COMMAND_TIMEOUT,
+            )
+        finally:
+            conn.disconnect()
 
         vlan = ""
         description = ""
@@ -199,29 +224,200 @@ class H3CManager:
                             })
 
         return {'vlan': vlan, 'bindings': bindings, 'description': description}, output_iface + "\n\n[Global Bindings]\n" + output_global
+
+    def get_all_bindings(self):
+        conn = self._get_connection()
+        try:
+            config_out = conn.send_command(
+                "display current-configuration interface",
+                read_timeout=SSH_COMMAND_TIMEOUT,
+            )
+            global_out = conn.send_command("display ip source binding", read_timeout=SSH_COMMAND_TIMEOUT)
+        finally:
+            conn.disconnect()
+
+        bindings = []
+        current_iface = None
+        current_vlan = "1"
+        current_mode = "trunk"
+
+        for raw_line in config_out.splitlines():
+            line = raw_line.strip()
+            if line.startswith("interface "):
+                full_name = line.split(" ", 1)[1].strip()
+                current_iface = full_name.replace('Ten-GigabitEthernet', 'XGE')\
+                                         .replace('XGigabitEthernet', 'XGE')\
+                                         .replace('M-GigabitEthernet', 'MGE')\
+                                         .replace('GigabitEthernet', 'GE')
+                current_vlan = "1"
+                current_mode = "trunk"
+                continue
+            if not current_iface:
+                continue
+            if line.startswith("port access vlan"):
+                parts = line.split()
+                if len(parts) >= 4:
+                    current_vlan = parts[3]
+            elif line.startswith("port trunk pvid vlan"):
+                parts = line.split()
+                if len(parts) >= 5:
+                    current_vlan = parts[4]
+            elif line.startswith("ip verify source"):
+                current_mode = "access"
+            elif "source binding" in line and "ip-address" in line:
+                ip_match = re.search(r'ip-address\s+([\d\.]+)', line)
+                mac_match = re.search(r'mac-address\s+([\w\-\.]+)', line)
+                vlan_match = re.search(r'vlan\s+(\d+)', line)
+                if ip_match and mac_match:
+                    bindings.append({
+                        'ip': ip_match.group(1),
+                        'mac': self.format_mac(mac_match.group(1)),
+                        'switch_port': current_iface,
+                        'vlan': vlan_match.group(1) if vlan_match else current_vlan,
+                        'mode': current_mode,
+                    })
+
+        known = {(b['ip'], b['mac'], b['switch_port']) for b in bindings}
+        for line in global_out.splitlines():
+            if 'Static' not in line:
+                continue
+            parts = line.split()
+            port_col = next((p for p in parts if p.startswith(('GE', 'XG', 'Gi', 'Te', 'BA'))), "")
+            ip_val = next((p for p in parts if p.count('.') == 3), "")
+            mac_val = next((p for p in parts if '-' in p and len(p) >= 12), "")
+            if not port_col or not ip_val or not mac_val:
+                continue
+            port_col_short = port_col.replace('Ten-GigabitEthernet', 'XGE')\
+                                     .replace('XGigabitEthernet', 'XGE')\
+                                     .replace('M-GigabitEthernet', 'MGE')\
+                                     .replace('GigabitEthernet', 'GE')
+            mac_val = self.format_mac(mac_val)
+            vlan_val = next((p for p in parts if p.isdigit() and len(p) <= 4), "")
+            if (ip_val, mac_val, port_col_short) not in known:
+                bindings.append({
+                    'ip': ip_val,
+                    'mac': mac_val,
+                    'switch_port': port_col_short,
+                    'vlan': vlan_val,
+                    'mode': 'trunk',
+                })
+
+        return bindings
 		
 # === 馃洜锔?缁堟瀬瀹岀編鐗堬細閰嶇疆缁戝畾 (鏋佽嚧瀹夊叏涓庣簿绠€) ===
-    def configure_port_binding(self, interface_name, vlan_id, bind_ip, bind_mac, mode="access"):
+    def configure_port_binding(self, interface_name, vlan_id, bind_ip, bind_mac, mode="access", current_config=None):
         conn = self._get_connection()
+        try:
+            output_iface = current_config
+            if output_iface is None:
+                output_iface = conn.send_command(
+                    f"display current-configuration interface {interface_name}",
+                    read_timeout=SSH_COMMAND_TIMEOUT,
+                )
+            mac = self.format_mac(bind_mac)
+            lines = {line.strip() for line in output_iface.splitlines()}
+            existing_bindings = []
+
+            for raw_line in output_iface.splitlines():
+                line = raw_line.strip()
+                if "source binding" not in line or "ip-address" not in line:
+                    continue
+                ip_match = re.search(r'ip-address\s+([\d\.]+)', line)
+                mac_match = re.search(r'mac-address\s+([\w\-\.]+)', line)
+                vlan_match = re.search(r'vlan\s+(\d+)', line)
+                if ip_match and mac_match:
+                    existing_bindings.append(
+                        {
+                            'ip': ip_match.group(1),
+                            'mac': self.format_mac(mac_match.group(1)),
+                            'vlan': vlan_match.group(1) if vlan_match else str(vlan_id or ''),
+                        }
+                    )
+
+            for item in existing_bindings:
+                same_ip = item['ip'] == bind_ip
+                same_mac = item['mac'] == mac
+                if same_ip and same_mac:
+                    return f"目标端口已存在相同绑定，未重复下发: {bind_ip} {mac}"
+                if same_ip or same_mac:
+                    raise RuntimeError(
+                        f"目标端口存在冲突绑定: {item['ip']} {item['mac']}，拒绝继续下发"
+                    )
+
+            cmds = [f"interface {interface_name}"]
+            if mode == "access":
+                if "stp edged-port" not in lines:
+                    cmds.append("stp edged-port")
+                if f"port access vlan {vlan_id}" not in lines:
+                    cmds.append(f"port access vlan {vlan_id}")
+                if "ip verify source ip-address mac-address" not in lines:
+                    cmds.append("ip verify source ip-address mac-address")
+                cmds.append(f"ip source binding ip-address {bind_ip} mac-address {mac}")
+            else:
+                cmds.append(f"ip source binding ip-address {bind_ip} mac-address {mac} vlan {vlan_id}")
+                cmds.extend(["quit", f"vlan {vlan_id}", "arp detection enable"])
+
+            output = conn.send_config_set(cmds)
+            self._ensure_command_success(output)
+            conn.save_config()
+            return output
+        finally:
+            conn.disconnect()
+
+    def set_interface_description(self, interface_name, description):
+        conn = self._get_connection()
+        try:
+            cmds = [f"interface {interface_name}"]
+            text = str(description or "").strip()
+            if text:
+                cmds.append(f"description {text}")
+            else:
+                cmds.append("undo description")
+            output = conn.send_config_set(cmds)
+            self._ensure_command_success(output)
+            conn.save_config()
+            return output
+        finally:
+            conn.disconnect()
+
+    def configure_port_bindings_batch(self, interface_name, bindings, mode="access"):
+        if not bindings:
+            raise ValueError("没有可下发的绑定记录")
+
+        conn = self._get_connection()
+        cmds = [f"interface {interface_name}"]
+
         if mode == "access":
-            cmds = [
-                f"interface {interface_name}",
-                "stp edged-port",
-                f"port access vlan {vlan_id}",
-                "ip verify source ip-address mac-address",
-                # Access 妯″紡锛氱函鍑€缁戝畾锛屼笉甯?vlan 鏍囥€傚埄鐢ㄥ簳灞傞殣寮?PVID 缁ф壙锛屾棦闃?IP 浼€狅紝鍙堥槻 ARP 娆洪獥
-                f"ip source binding ip-address {bind_ip} mac-address {self.format_mac(bind_mac)}"
-            ]
-        else: 
-            # Trunk 娣峰悎妯″紡锛氬甫 vlan 鏍囷紝渚濊禆涓氬姟 VLAN 涓嬬殑 ARP Detection
-            cmds = [
-                f"interface {interface_name}",
-                f"ip source binding ip-address {bind_ip} mac-address {self.format_mac(bind_mac)} vlan {vlan_id}",
-                "quit",
-                f"vlan {vlan_id}",
-                "arp detection enable"
-            ]
-            
+            vlan_values = {str(item.get('vlan', '')).strip() for item in bindings if str(item.get('vlan', '')).strip()}
+            if len(vlan_values) != 1:
+                raise ValueError("Access 模式下，同一端口的批量绑定必须使用同一个 VLAN")
+            vlan_id = next(iter(vlan_values))
+            cmds.extend(
+                [
+                    "stp edged-port",
+                    f"port access vlan {vlan_id}",
+                    "ip verify source ip-address mac-address",
+                ]
+            )
+            for item in bindings:
+                cmds.append(
+                    f"ip source binding ip-address {item['bind_ip']} mac-address {self.format_mac(item['mac'])}"
+                )
+        else:
+            vlan_ids = []
+            for item in bindings:
+                vlan_id = str(item.get('vlan', '')).strip()
+                if not vlan_id:
+                    raise ValueError("Trunk 模式批量绑定时每条记录都必须提供 VLAN")
+                cmds.append(
+                    f"ip source binding ip-address {item['bind_ip']} mac-address {self.format_mac(item['mac'])} vlan {vlan_id}"
+                )
+                if vlan_id not in vlan_ids:
+                    vlan_ids.append(vlan_id)
+            cmds.append("quit")
+            for vlan_id in vlan_ids:
+                cmds.extend([f"vlan {vlan_id}", "arp detection enable"])
+
         output = conn.send_config_set(cmds)
         conn.save_config()
         conn.disconnect()
@@ -267,6 +463,71 @@ class H3CManager:
                 except:
                     pass
         return rules
+
+    def _parse_acl_output(self, output, default_acl_number=None):
+        import re
+
+        groups = []
+        current = None
+        header_patterns = [
+            re.compile(r'^(?P<type>.+?ACL)\s+(?P<number>\d{4})\b', re.IGNORECASE),
+            re.compile(r'^acl\s+(?:mac\s+)?(?P<number>\d{4})\b', re.IGNORECASE),
+        ]
+
+        def ensure_group(number, acl_type='ACL'):
+            for group in groups:
+                if group['number'] == str(number):
+                    return group
+            group = {'number': str(number), 'type': acl_type.strip(), 'rules': []}
+            groups.append(group)
+            return group
+
+        if default_acl_number is not None:
+            current = ensure_group(default_acl_number, 'ACL')
+
+        for raw_line in output.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            matched_header = None
+            for pattern in header_patterns:
+                matched_header = pattern.search(line)
+                if matched_header:
+                    break
+            if matched_header:
+                acl_type = matched_header.groupdict().get('type') or 'ACL'
+                current = ensure_group(matched_header.group('number'), acl_type)
+                continue
+            if not line.startswith('rule'):
+                continue
+            if current is None:
+                current = ensure_group(default_acl_number or 'unknown', 'ACL')
+
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            rule = {
+                'acl_number': current['number'],
+                'acl_type': current['type'],
+                'id': parts[1],
+                'action': parts[2],
+                'mac': '',
+                'raw': line,
+            }
+            mac_match = re.search(r'([0-9a-fA-F]{4}[-:.][0-9a-fA-F]{4}[-:.][0-9a-fA-F]{4})', line)
+            if mac_match:
+                rule['mac'] = self.format_mac(mac_match.group(1))
+            current['rules'].append(rule)
+
+        return groups
+
+    def get_acl_groups(self):
+        conn = self._get_connection()
+        try:
+            output = conn.send_command("display acl all", read_timeout=SSH_LONG_COMMAND_TIMEOUT)
+        finally:
+            conn.disconnect()
+        return self._parse_acl_output(output)
 
     def add_acl_mac(self, mac, rule_id=None, acl_number=4000):
         cmd = f"rule {rule_id} permit" if rule_id else "rule permit"
@@ -334,7 +595,7 @@ class HuaweiManager(H3CManager):
     def get_full_config(self):
         conn = self._get_connection()
         try:
-            conn.send_command("screen-length 0 disable")
+            conn.send_command("screen-length 0 temporary", read_timeout=SSH_COMMAND_TIMEOUT)
             config = conn.send_command("display current-configuration")
             return config
         except Exception as e:
@@ -346,9 +607,26 @@ class HuaweiManager(H3CManager):
     def get_port_info(self, interface_name):
         full_name = self._expand_interface_name(interface_name)
         conn = self._get_connection()
-        output_iface = conn.send_command(f"display current-configuration interface {full_name}")
-        output_global = conn.send_command("display current-configuration | include user-bind")
-        conn.disconnect()
+        try:
+            output_iface = conn.send_command(
+                f"display current-configuration interface {full_name}",
+                read_timeout=SSH_COMMAND_TIMEOUT,
+            )
+            output_global = conn.send_command(
+                "display current-configuration | include user-bind",
+                read_timeout=SSH_COMMAND_TIMEOUT,
+            )
+        finally:
+            conn.disconnect()
+
+    def get_alarm_logs(self):
+        conn = self._get_connection()
+        try:
+            conn.send_command("screen-length 0 temporary", read_timeout=SSH_COMMAND_TIMEOUT)
+            output = conn.send_command("display logbuffer", read_timeout=SSH_LONG_COMMAND_TIMEOUT)
+        finally:
+            conn.disconnect()
+        return output
 
         vlan = ""
         description = ""
@@ -417,27 +695,166 @@ class HuaweiManager(H3CManager):
             'query_scope': query_scope
         }, output_iface + "\n\n[Global User-Bind]\n" + output_global
 
+    def get_all_bindings(self):
+        conn = self._get_connection()
+        try:
+            conn.send_command("screen-length 0 temporary", read_timeout=SSH_COMMAND_TIMEOUT)
+            config_out = conn.send_command(
+                "display current-configuration interface",
+                read_timeout=SSH_LONG_COMMAND_TIMEOUT,
+            )
+        finally:
+            conn.disconnect()
+
+        bindings = []
+        current_iface = None
+        current_vlan = "1"
+        current_mode = "trunk"
+
+        for raw_line in config_out.splitlines():
+            line = raw_line.strip()
+            if line.startswith("interface "):
+                full_name = line.split(" ", 1)[1].strip()
+                current_iface = full_name.replace('GigabitEthernet', 'GE')\
+                                         .replace('XGigabitEthernet', 'XGE')\
+                                         .replace('Ten-GigabitEthernet', 'XGE')\
+                                         .replace('Ethernet', 'Eth')
+                current_vlan = "1"
+                current_mode = "trunk"
+                continue
+            if not current_iface:
+                continue
+            if line.startswith("port default vlan"):
+                parts = line.split()
+                if len(parts) >= 4:
+                    current_vlan = parts[3]
+            elif line.startswith("port trunk pvid vlan"):
+                parts = line.split()
+                if len(parts) >= 5:
+                    current_vlan = parts[4]
+            elif "source check user-bind enable" in line:
+                current_mode = "access"
+            elif "user-bind" in line and "ip-address" in line:
+                ip_match = re.search(r'ip-address\s+([\d\.]+)', line)
+                mac_match = re.search(r'mac-address\s+([\w\-\.]+)', line)
+                vlan_match = re.search(r'vlan\s+(\d+)', line)
+                if ip_match and mac_match:
+                    bindings.append({
+                        'ip': ip_match.group(1),
+                        'mac': self.format_mac(mac_match.group(1)),
+                        'switch_port': current_iface,
+                        'vlan': vlan_match.group(1) if vlan_match else current_vlan,
+                        'mode': current_mode,
+                    })
+
+        return bindings
+
     # 馃憞 2. 閲嶅啓鍗庝负锛氶厤缃鍙ｇ粦瀹?
-    def configure_port_binding(self, interface_name, vlan_id, bind_ip, bind_mac, mode="access"):
+    def configure_port_binding(self, interface_name, vlan_id, bind_ip, bind_mac, mode="access", current_config=None):
         full_name = self._expand_interface_name(interface_name)
         conn = self._get_connection()
+        try:
+            output_iface = current_config
+            if output_iface is None:
+                output_iface = conn.send_command(
+                    f"display current-configuration interface {full_name}",
+                    read_timeout=SSH_COMMAND_TIMEOUT,
+                )
+            mac = self.format_mac(bind_mac)
+            lines = {line.strip() for line in output_iface.splitlines()}
+
+            for raw_line in output_iface.splitlines():
+                line = raw_line.strip()
+                if "user-bind" not in line or "ip-address" not in line:
+                    continue
+                ip_match = re.search(r'ip-address\s+([\d\.]+)', line)
+                mac_match = re.search(r'mac-address\s+([\w\-\.]+)', line)
+                if not ip_match or not mac_match:
+                    continue
+                old_ip = ip_match.group(1)
+                old_mac = self.format_mac(mac_match.group(1))
+                same_ip = old_ip == bind_ip
+                same_mac = old_mac == mac
+                if same_ip and same_mac:
+                    return f"目标端口已存在相同绑定，未重复下发: {bind_ip} {mac}"
+                if same_ip or same_mac:
+                    raise RuntimeError(f"目标端口存在冲突绑定: {old_ip} {old_mac}，拒绝继续下发")
+
+            cmds = [f"interface {full_name}"]
+            if mode == "access":
+                if "stp edged-port enable" not in lines:
+                    cmds.append("stp edged-port enable")
+                if f"port default vlan {vlan_id}" not in lines:
+                    cmds.append(f"port default vlan {vlan_id}")
+                if (
+                    "ip source check user-bind enable" not in lines
+                    and "ipv4 source check user-bind enable" not in lines
+                ):
+                    cmds.append("ip source check user-bind enable")
+                cmds.append(f"user-bind static ip-address {bind_ip} mac-address {mac}")
+            else:
+                cmds.append(f"user-bind static ip-address {bind_ip} mac-address {mac} vlan {vlan_id}")
+
+            output = conn.send_config_set(cmds)
+            self._ensure_command_success(output)
+            conn.save_config()
+            return output
+        finally:
+            conn.disconnect()
+
+    def set_interface_description(self, interface_name, description):
+        full_name = self._expand_interface_name(interface_name)
+        conn = self._get_connection()
+        try:
+            cmds = [f"interface {full_name}"]
+            text = str(description or "").strip()
+            if text:
+                cmds.append(f"description {text}")
+            else:
+                cmds.append("undo description")
+            output = conn.send_config_set(cmds)
+            self._ensure_command_success(output)
+            conn.save_config()
+            return output
+        finally:
+            conn.disconnect()
+
+    def configure_port_bindings_batch(self, interface_name, bindings, mode="access"):
+        if not bindings:
+            raise ValueError("没有可下发的绑定记录")
+
+        full_name = self._expand_interface_name(interface_name)
+        conn = self._get_connection()
+        cmds = [f"interface {full_name}"]
+
         if mode == "access":
-            cmds = [
-                f"interface {full_name}",
-                "stp edged-port enable", # 鍗庝负鍛戒护閫氬父甯?enable
-                f"port default vlan {vlan_id}",
-                "ip source check user-bind enable", # 鍗庝负寮€鍚?IPSG 妫€鏌?
-                f"user-bind static ip-address {bind_ip} mac-address {self.format_mac(bind_mac)}"
-            ]
-        else: 
-            cmds = [
-                f"interface {full_name}",
-                f"user-bind static ip-address {bind_ip} mac-address {self.format_mac(bind_mac)} vlan {vlan_id}"
-            ]
-            
+            vlan_values = {str(item.get('vlan', '')).strip() for item in bindings if str(item.get('vlan', '')).strip()}
+            if len(vlan_values) != 1:
+                raise ValueError("Access 模式下，同一端口的批量绑定必须使用同一个 VLAN")
+            vlan_id = next(iter(vlan_values))
+            cmds.extend(
+                [
+                    "stp edged-port enable",
+                    f"port default vlan {vlan_id}",
+                    "ip source check user-bind enable",
+                ]
+            )
+            for item in bindings:
+                cmds.append(
+                    f"user-bind static ip-address {item['bind_ip']} mac-address {self.format_mac(item['mac'])}"
+                )
+        else:
+            for item in bindings:
+                vlan_id = str(item.get('vlan', '')).strip()
+                if not vlan_id:
+                    raise ValueError("Trunk/Hybrid 模式批量绑定时每条记录都必须提供 VLAN")
+                cmds.append(
+                    f"user-bind static ip-address {item['bind_ip']} mac-address {self.format_mac(item['mac'])} vlan {vlan_id}"
+                )
+
         output = conn.send_config_set(cmds)
         self._ensure_command_success(output)
-        conn.save_config() # 鍗庝负妯″紡涓嬭嚜鍔ㄥ鐞嗙‘璁や氦浜?
+        conn.save_config()
         conn.disconnect()
         return output
 
@@ -469,6 +886,15 @@ class HuaweiManager(H3CManager):
         conn.save_config()
         conn.disconnect()
         return output
+
+    def get_acl_groups(self):
+        conn = self._get_connection()
+        try:
+            conn.send_command("screen-length 0 temporary", read_timeout=SSH_COMMAND_TIMEOUT)
+            output = conn.send_command("display acl all", read_timeout=SSH_LONG_COMMAND_TIMEOUT)
+        finally:
+            conn.disconnect()
+        return self._parse_acl_output(output)
 
     def delete_acl_rule(self, rule_id, acl_number=4000):
         config_cmds = [f"acl {acl_number}", f"undo rule {rule_id}"]
