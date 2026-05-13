@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="360" viewBox="0 0 860 360" role="img" aria-label="端口绑定示意图">
+  <rect width="860" height="360" rx="12" fill="#f5f7fb"/>
+  <rect x="24" y="24" width="812" height="58" rx="8" fill="#ffffff" stroke="#b6cee8"/>
+  <text x="48" y="59" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#182433">端口 IP+MAC 绑定</text>
+  <rect x="24" y="104" width="812" height="210" rx="8" fill="#ffffff" stroke="#dbe5f2"/>
+  <text x="48" y="136" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#182433">端口配置</text>
+  <rect x="48" y="160" width="260" height="36" rx="6" fill="#ffffff" stroke="#b6cee8"/>
+  <text x="64" y="183" font-family="Arial, sans-serif" font-size="13" fill="#182433">[SNMP up] GE1/0/1</text>
+  <rect x="320" y="160" width="86" height="36" rx="6" fill="#eaf2ff" stroke="#b6cee8"/>
+  <text x="342" y="183" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#206bc4">模式查询</text>
+  <rect x="418" y="160" width="86" height="36" rx="6" fill="#206bc4"/>
+  <text x="440" y="183" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#ffffff">单口查询</text>
+  <rect x="520" y="160" width="280" height="36" rx="6" fill="#dcfce7" stroke="#a7e2b2"/>
+  <text x="538" y="183" font-family="Arial, sans-serif" font-size="13" fill="#15803d">SNMP 轻量状态：链路 up / 速率 / 描述</text>
+  <line x1="48" y1="220" x2="812" y2="220" stroke="#dbe5f2"/>
+  <text x="48" y="250" font-family="Arial, sans-serif" font-size="13" fill="#667382">下发前系统会通过 SSH 复核当前端口，避免误操作级联或 trunk 端口。</text>
+  <rect x="48" y="272" width="154" height="34" rx="6" fill="#ffffff" stroke="#dbe5f2"/>
+  <text x="64" y="294" font-family="Arial, sans-serif" font-size="13" fill="#182433">业务 VLAN</text>
+  <rect x="216" y="272" width="154" height="34" rx="6" fill="#ffffff" stroke="#dbe5f2"/>
+  <text x="232" y="294" font-family="Arial, sans-serif" font-size="13" fill="#182433">绑定 IP</text>
+  <rect x="384" y="272" width="154" height="34" rx="6" fill="#ffffff" stroke="#dbe5f2"/>
+  <text x="400" y="294" font-family="Arial, sans-serif" font-size="13" fill="#182433">绑定 MAC</text>
+</svg>

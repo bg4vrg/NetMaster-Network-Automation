@@ -1,30 +1,89 @@
 ﻿import openpyxl
-from apscheduler.schedulers.background import BackgroundScheduler
 import os
 import datetime
-import ipaddress
-import threading
 import json
-import subprocess
-import sys
-import difflib
 import csv
 import io
-import zipfile
-import shutil
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from flask import Flask, render_template, request, jsonify, abort
+from flask_login import LoginManager, UserMixin, login_required, current_user
 from switch_driver import H3CManager, HuaweiManager
 import database as db
 import traceback
+from validators import (
+    require_fields,
+    normalize_ip,
+    normalize_port,
+    normalize_vlan,
+    normalize_vendor,
+    normalize_switch_role,
+    normalize_bool_flag,
+    validate_password_policy,
+    normalize_mac,
+    normalize_mode,
+    normalize_acl_number,
+)
+from backup_file_service import (
+    backup_root_abs,
+    count_backup_days,
+    list_backup_config_files,
+    read_backup_text,
+    resolve_backup_file,
+)
+from data_package_service import (
+    backup_current_db_key as service_backup_current_db_key,
+    create_data_package as service_create_data_package,
+    preview_data_package as service_preview_data_package,
+    restore_data_package as service_restore_data_package,
+    write_data_package_to_dir as service_write_data_package_to_dir,
+)
+from legacy_asset_service import import_legacy_switch_assets as service_import_legacy_switch_assets
+from alarm_service import (
+    build_alarm_command_suggestions,
+    collect_switch_alarm_report as service_collect_switch_alarm_report,
+)
+from offline_binding_service import import_bindings_from_backup_files as service_import_bindings_from_backup_files
+from terminal_sync_service import (
+    MacSyncStateStore,
+    log_mac_sync_switch_result as service_log_mac_sync_switch_result,
+    persist_switch_bindings as service_persist_switch_bindings,
+    read_switch_bindings_with_timeout as service_read_switch_bindings_with_timeout,
+    run_mac_bindings_sync as service_run_mac_bindings_sync,
+    scan_one_switch_for_terminal as service_scan_one_switch_for_terminal,
+    sync_all_switch_bindings as service_sync_all_switch_bindings,
+    sync_switch_bindings as service_sync_switch_bindings,
+    sync_switch_bindings_with_timeout as service_sync_switch_bindings_with_timeout,
+)
+from blueprints.audit_task import create_audit_task_blueprint
+from blueprints.alarm_manage import create_alarm_manage_blueprint
+from blueprints.alarm_read import create_alarm_read_blueprint
+from blueprints.backup_read import create_backup_read_blueprint
+from blueprints.backup_manage import create_backup_manage_blueprint
+from blueprints.info_read import create_info_read_blueprint
+from blueprints.asset_user_read import create_asset_user_read_blueprint
+from blueprints.asset_manage import create_asset_manage_blueprint
+from blueprints.system_manage import create_system_manage_blueprint
+from blueprints.user_manage import create_user_manage_blueprint
+from blueprints.switch_connect import create_switch_connect_blueprint
+from blueprints.access_manage import create_access_manage_blueprint
+from blueprints.roam_manage import create_roam_manage_blueprint
+from blueprints.excel_manage import create_excel_manage_blueprint
+from blueprints.terminal_state import create_terminal_state_blueprint
+from blueprints.profile_health import create_profile_health_blueprint
+from blueprints.task_runtime import create_task_runtime_blueprint
+from blueprints.port_snapshot import create_port_snapshot_blueprint
+from blueprints.snmp_status import create_snmp_status_blueprint
+from blueprints.auth_pages import create_auth_pages_blueprint
+from blueprints.compliance_analysis import create_compliance_analysis_blueprint
+from runtime_paths import BACKUP_DIR, DATA_PACKAGE_DIR, RESTORE_BACKUP_DIR
+from scheduler_service import create_scheduler_service
+from xlsx_utils import autosize_worksheet, send_xlsx_workbook
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_h3c_admin_tool_2026'
 
-APP_VERSION = "2.10.0"
-APP_RELEASE_DATE = "2026-05-01"
+APP_VERSION = "2.54.5"
+APP_RELEASE_DATE = "2026-05-09"
 APP_VERSION_INFO = {
     "version": APP_VERSION,
     "release_date": APP_RELEASE_DATE,
@@ -45,6 +104,167 @@ APP_VERSION_INFO = {
         "审计日志和首页看板，支持专网离线运行，无外部 CDN 或远程 API 依赖",
     ],
     "updates": [
+        "准入合规分析收紧疑似废弃下线判断：同一 MAC 只要在 IP管理或9200平台存在阈值内近期记录，就不再按废弃下线分流",
+        "准入合规分析新增疑似废弃下线判断：IP管理与9200均为超过阈值的旧记录且未入人工台账时优先分流，减少历史残留误报",
+        "准入合规分析新增每条风险的判定依据，并同步到页面表格和 CSV 导出",
+        "准入合规分析表头支持 IP、MAC、接入设备和更新时间点击排序",
+        "同MAC多IP、同IP多MAC在全部类型视图中也显示聚合证据卡片，直接看到关联 IP/MAC",
+        "OUI 厂商识别简化为只读取本地 oui.txt，不再提示下载 CSV，保留少量内置常见厂商兜底",
+        "OUI 厂商识别兼容 IEEE 根地址保存的 oui.txt",
+        "准入合规分析新增离线 OUI 厂商识别：风险表格和组类风险卡片显示 MAC 对应厂商，未知前缀显示无法识别厂商",
+        "准入合规分析概要进一步精简，风险类型统计改为可复制文本标签",
+        "准入合规分析新增组类风险证据链展示：选择同MAC多IP或同IP多MAC时改为聚合卡片，直观看到关联 IP/MAC、交换机、端口、VLAN 和时间",
+        "准入合规分析表格改为前端懒加载，每批渲染 120 条，滚动到底部自动追加，筛选和导出仍基于全量结果",
+        "准入合规分析进一步精简：取消参考模板按钮和风险等级列，统一三个平台上传说明，避免与交换机告警等级混淆",
+        "准入合规分析风险类型下拉改用全量统计生成，表格最多渲染前 1000 条，筛选和导出仍基于全量风险结果",
+        "准入合规分析新增历史记录，可保存每次导入文件、摘要统计和风险明细，便于后续回看与导出",
+        "准入合规分析改为默认全量离线分析，不再按时间范围或在线状态跳过导出记录",
+        "准入合规分析首页摘要改为可读结论和风险类型分布，隐藏字段识别调试信息，减少无效指标卡片",
+        "页面表格和结果区恢复文本选择能力，便于直接复制设备 IP、MAC、端口和准入合规分析结果",
+        "准入合规分析放宽 9200 合规判定：保护状态=保护或核心版本包含 9200 即视为合法，不再要求安装状态必须为“是”",
+        "准入合规分析三层字段规则落地：IP/MAC 与 9200 状态字段用于判定，责任人、部门、位置、用途、设备类型等只作为风险定位信息展示和导出",
+        "准入合规分析风险行会从 9200 或人工台账补充定位字段，便于发现不合规终端后直接找人、找位置、找设备",
+        "准入合规分析适配新版群晖固定台账列：rule、设备ip、设备mac、使用/责任人、安装位置、设备用途、设备类型等；比对仍只使用 IP/MAC，定位字段仅随风险结果展示和导出",
+        "准入合规分析适配 9200 平台实际 CSV：自动跳过标题行，按“保护状态=保护”或“核心版本包含9200”判定合法终端",
+        "准入合规分析适配群晖多工作簿台账：自动识别每个工作簿内表头，支持不同部门工作簿使用不同 MAC 列名",
+        "准入合规分析新增 9200 平台和人工审批台账参考模板下载，方便在样本未齐全前先统一字段口径",
+        "准入合规分析页面新增风险等级、风险类型、关键词筛选，并支持将当前分析结果导出为 CSV 报告",
+        "新增准入合规分析第一版：支持上传 IP 地址管理平台 CSV/XLSX，自动识别 IP、MAC、接入交换机、端口、VLAN、在线状态和最近上线时间",
+        "准入合规分析支持可选上传 9200 平台与人工审批台账，预留未安装 9200、未报备入网、IP-MAC 不符、同 IP 多 MAC、同 MAC 多 IP 等风险识别",
+        "准入合规分析页面采用本地文件上传和离线计算，不读取交换机，不增加交换机运行负载",
+        "运行环境收尾：requirements.txt 移除本机 file:/// 构建路径依赖，packaging 改为标准版本锁定，并补充 openpyxl",
+        "源码目录清理：历史源码备份目录已打包归档到上级目录，项目目录仅保留运行数据和当前源码",
+        "版本信息弹窗精简为版本摘要、核心能力和最近变化，完整记录保留在 Markdown 维护日志",
+        "帮助页改为首屏内置说明，完整 USER_GUIDE.md 通过页面底部按钮按需加载",
+        "安全收口：删除旧 add_user.py 旁路脚本，用户创建统一通过 Web 用户管理完成",
+        "页面 QA 小修：运维操作员隐藏系统设置内容容器，与左侧菜单和后端权限保持一致",
+        "用户/权限复核：运行任务接口补 task.view，深度在线健康检查补 access.write，并增加越权回归检查",
+        "terminal_sync_service.py 接管终端漫游主动定位使用的全网扫描和单台扫描包装",
+        "terminal_sync_service.py 接管终端绑定同步全网/单台任务编排主流程",
+        "terminal_sync_service.py 接管终端同步单台设备审计日志格式化逻辑",
+        "terminal_sync_service.py 接管单台交换机终端绑定同步包装和超时读取后的持久化分派",
+        "terminal_sync_service.py 接管终端绑定同步状态容器，app.py 保留锁和状态访问包装以兼容蓝图注入",
+        "新增 offline_binding_service.py，抽离从本地备份配置解析并导入终端绑定记录的逻辑",
+        "terminal_sync_service.py 继续接管终端绑定记录归一、持久化统计和查询匹配逻辑",
+        "新增 terminal_sync_service.py，抽离终端绑定同步中的子进程读取和超时保护逻辑",
+        "新增 alarm_service.py，抽离告警日志文本分析、告警排查命令建议和交换机告警采集封装",
+        "新增 legacy_asset_service.py，抽离旧版 net_assets.db 上传解析、旧密钥读取、旧密码解密和资产导入汇总逻辑",
+        "新增 data_package_service.py，抽离完整数据包导出、导入、预览和当前库备份逻辑",
+        "新增 backup_file_service.py，抽离本地备份文件路径解析、列表读取和备份天数统计，继续推进 app.py 服务层整理",
+        "全页面收尾前完成源码备份，并继续收紧资产导入、数据备份、ACL、端口绑定、终端漫游和改密弹窗的零散按钮",
+        "端口画像风险规则细化，增加离线仍绑定、多终端、双/多 VLAN、模式混用、缺少描述和超期巡检权重",
+        "资产导入与数据备份区域按钮继续收窄为小尺寸图标按钮，并补充 tooltip",
+        "端口画像超期处理入口改名为标记巡检，强调只更新本地巡检记录，不代表故障已修复",
+        "端口画像新增风险/状态/搜索筛选和超期确认入口，确认操作只更新本地确认时间并写入审计，不登录交换机",
+        "配置差异结果新增轻量摘要，突出新增/删除行数和主要变化类别，避免重新堆叠设备备份状态",
+        "Excel 批量部署操作按钮继续收窄为模板、解析预览、一键下发三类明确动作",
+        "修复 HuaweiManager.get_port_info 解析代码位置错误，恢复华为设备端口详情和绑定记录返回",
+        "恢复近 30 天终端变动完整日期轴，保留无数据日期并弱化显示，避免趋势图缺少日期上下文",
+        "新增 validators.py，抽离 IP、端口、VLAN、厂商、角色、MAC、模式、ACL 和密码策略校验函数",
+        "调度器蓝图化配套拆分：新增 scheduler_service.py 接管自动备份、终端同步、数据包导出、日志告警采集和 APScheduler 装配",
+        "新增 runtime_paths.py，支持通过 NETMASTER_DATA_DIR 外置数据库、密钥、备份和数据包目录；默认仍保持当前目录兼容",
+        "继续蓝图拆分：新增 auth_pages.py 接管登录和退出页面路由，app.py 仅保留首页入口和启动调度逻辑",
+        "Dashboard 视觉统一：侧栏收窄减重、KPI 卡片压缩、最近绑定变更改为标准表格、趋势图减少无效日期噪声",
+        "桌面端左侧菜单改为 fixed left:0，彻底贴齐浏览器左边；首页趋势图和圆环图增加固定图形区与图例区，避免文字遮挡",
+        "侧栏和主容器样式选择器提权为 body 直属容器，清除 Bootstrap/Tabler 容器 gutter 干扰；登录页和首页样式表统一增加版本缓存参数",
+        "侧栏内部左 padding 清零并给主样式表增加版本参数，确保浏览器加载最新左侧菜单样式",
+        "清除浏览器默认 body margin，修复左侧菜单仍有顽固空白的问题",
+        "强制清除 Bootstrap container 左侧 gutter/margin，左侧菜单真正贴齐页面左边",
+        "左侧侧边栏取消左侧留白并贴左显示，保留右侧圆角；Tabler fluid vertical layout 完整改造纳入后续收尾任务池",
+        "左侧菜单改为 Tabler 风格圆角独立侧边栏，收紧宽度和留白，品牌区改为满宽 header 面板",
+        "数据备份页面新增配置备份任务模块，提供批量备份配置按钮并继续使用后台任务执行",
+        "左侧菜单收紧内边距并彻底移除底部批量备份侧栏按钮，避免 90% 缩放时露出重复入口",
+        "页面顶部留白从 12px 收紧到 6px，保留页头上边框可见性",
+        "Waitress 线程数提升到 16 并增加连接队列容量，减少刷新页面时的 queue depth 提示；页面顶部增加留白以显示页头上边框",
+        "页头信息胶囊改为当前页面名称，并修复页头上边框视觉不明显的问题",
+        "全局页头增加轻量中控信息带和柔和背景，改善压缩后过扁的问题",
+        "全局页头压缩：版本号移动到标题右侧，移除标题下方描述文字，减少页面顶部留白",
+        "任务池 1-4 推进：端口画像接入 SNMP 单端口刷新和维护建议，批量备份/深度健康检查/日志采集新增后台任务启动入口，配置差异新增接口/VLAN/绑定/ACL/路由/管理服务分类统计",
+        "新增 SNMP 轻量端口状态查询接口和系统设置项，默认只读团体名为 suyuga0527；端口查询先读 SNMP 状态，再用 SSH 读取配置级绑定详情",
+        "端口 IP+MAC 绑定页选择快捷交换机后自动加载端口列表，减少手动刷新步骤；端口快照策略调整为先保留按需触发，后续优先评估 SNMP 轻量实时状态采集",
+        "终端漫游目标端口接入缓存快照展示和资产凭据实时复核任务，迁移前可先看缓存再做实时确认",
+        "新增端口快照表和后台采集接口，支持按单台交换机或明确全量方式采集端口缓存",
+        "端口实时查询改为后台任务启动和轮询进度反馈，选中端口后不再长时间占用前端请求",
+        "新增后台任务基础框架和运行中任务查询接口，为端口实时查询、健康检查、备份等耗时操作后台化打底",
+        "新增独立终端列表页面，保留终端漫游页简化源终端选择列表，支持全网筛选、异常筛选、导出和带入漫游",
+        "清理 app.py 关键分区乱码注释，降低后续维护成本",
+        "冒烟脚本写接口边界验证改为临时屏蔽审计写入，避免测试失败记录污染正式审计日志",
+        "新增 blueprints.profile_health，迁移端口画像和深度在线健康检查接口；改密接口归入用户管理蓝图",
+        "新增 blueprints.terminal_state，迁移终端绑定同步、同步状态和已绑定终端列表接口",
+        "新增 blueprints.excel_manage，迁移 Excel 模板、解析、聚合下发和单行下发接口",
+        "新增 blueprints.roam_manage，迁移终端定位和终端迁移接口，继续收缩 app.py 写操作体积",
+        "新增 blueprints.access_manage，迁移端口描述、端口绑定/解绑和 ACL 查询/新增/删除接口",
+        "新增 blueprints.switch_connect，迁移连接测试、接口列表、端口详情和保存配置接口",
+        "新增 blueprints.alarm_read，迁移告警报表和告警中心 Dashboard 只读接口",
+        "新增 blueprints.alarm_manage，迁移告警日志采集和告警状态更新写接口，并补齐采集接口 alarm.manage 权限",
+        "扩展轻量回归验收脚本，增加本地 Tabler 资源、关键菜单、审计/备份接口和运维操作员权限入口检查",
+        "统一资产管理、任务中心、审计日志和资产导入预校验表格按钮与状态样式，新增轻量回归验证脚本",
+        "用户管理页面新增角色权限说明和权限概览列，系统级入口按管理员权限隐藏",
+        "新增 blueprints.backup_manage，迁移数据包导入导出、旧版资产导入、离线绑定导入和手动批量备份接口",
+        "审计日志页面操作人、动作类型、目标 IP 筛选改为选择控件，减少手工输入误差",
+        "新增 blueprints.asset_manage，迁移资产导出、资产导入预校验/导入、新增、删除、修改和元数据更新接口",
+        "资产导出文件补充角色列，和资产导入模板保持一致",
+        "左侧菜单用户管理入口图标改为人形图标，避免与横线/列表图标混淆",
+        "新增 blueprints.user_manage，迁移用户新增、修改和重置密码写接口",
+        "新增 blueprints.system_manage，迁移系统设置写接口 /api/settings/update",
+        "权限点细化：新增 system.manage，保护系统设置写入和调度器重载",
+        "权限点细化：新增 user.manage、asset.export_sensitive、backup.manage，分别保护用户管理、含密码资产导出和备份管理操作",
+        "asset_user_read 蓝图中的用户列表读取改用 user.manage 权限点",
+        "新增 blueprints.asset_user_read，迁移资产列表、资产导入模板和用户列表读取接口",
+        "修复设备批量导入解析角色列：模板填写 backup 时按备份设备导入，不填仍默认 access",
+        "页面右上角移除重复的数据备份按钮，仅保留左侧菜单入口",
+        "新增 blueprints.info_read，迁移版本信息、Dashboard 统计、健康检查和系统设置读取接口",
+        "Dashboard 绑定变更列表最终样式固化：全宽单行、源/目的标签、普通字体和紧凑行高",
+        "Dashboard 绑定变更行视觉增强：收紧列间距、增强行边界，并为源/目的交换机列增加醒目标识",
+        "Dashboard 最近 10 次绑定变更去掉每列下方重复说明小字，只保留横向主信息",
+        "Dashboard 最近 10 次绑定变更模块改为整行全宽显示，每次变更占用水平完整一行，字段不再在半屏窄栏内换行",
+        "Dashboard 最近 10 次绑定变更恢复为纵向列表样式，避免卡片/多列布局导致字段显示不全",
+        "左侧菜单调整：任务中心移到告警中心下方并归入总览与告警组，任务与审计分组取消",
+        "左侧菜单管理设备改名为资产管理，审计日志归入管理设置组",
+        "配置差异页面移除设备备份状态卡片区，保留交换机下拉一键比对和手动新旧配置比对",
+        "管理设备页面顶部导入和手动新增区域改为紧凑双列布局，减少无效留白",
+        "设备导入模板新增角色列，支持 access/backup；不填角色仍默认按 access 导入",
+        "backup 只读/比对接口迁移到 blueprints.backup_read，继续推进 app.py 低风险蓝图拆分",
+        "audit/task 路由迁移到 blueprints.audit_task，完成首个低风险蓝图拆分",
+        "权限点细化到 access.write、roam.write、alarm.manage，并保护对应端口准入、终端漫游和告警处理接口",
+        "用户管理新增角色/状态筛选和最近登录排序",
+        "ACL、告警中心、终端列表等表格按钮继续统一为图标按钮加 tooltip",
+        "配置差异页面新增按设备卡片化聚合展示最近备份状态，并可点击比对最近两次备份",
+        "配置差异比对页移除设备聚合快捷按钮区，仅保留交换机下拉一键比对入口",
+        "配置差异比对的一键比对入口改为快捷选择交换机，避免手填 IP 出错",
+        "下一阶段改造：用户管理拆成独立页面，数据备份拆成完整数据包、旧版资产导入、资产导入导出三块",
+        "端口画像新增端口绑定终端明细下钻，配置差异新增按设备聚合的最近备份状态入口",
+        "权限第二阶段建立 permission_required 基座，关键资产维护、交换机下发、审计查看和任务查看接口按权限点保护",
+        "新增 blueprints 目录和拆分计划，开始为 app.py 蓝图化拆分做准备",
+        "终端漫游 Step 2 右侧新增保存配置按钮，可对目标交换机手动执行 save force",
+        "按优先级完成安全与体验增强：旧版资产导入前自动备份当前 DB/KEY，便于回滚",
+        "页面剩余浏览器原生 alert 已收口为 Tabler Toast，统一提示体验",
+        "Dashboard 顶部指标和看板模块支持点击下钻到管理设备、备份差异、告警中心、任务中心和端口画像",
+        "管理设备导入新增预校验接口与页面报告，Excel 批量部署解析后展示行数、交换机数、端口任务数和重复记录",
+        "端口画像升级为端口风险画像，按高密度、多 VLAN、Trunk、模式混用和超期确认计算风险分",
+        "配置差异新增按交换机 IP 一键比对最近两次备份",
+        "审计日志新增操作人、动作、目标 IP、状态和日期过滤，并支持 CSV 导出",
+        "任务中心长详情改为详情按钮查看，减少表格横向拥挤",
+        "保存配置按钮从页面右上角移动到设备连接与管理模块，紧邻连接测试按钮，降低误操作风险",
+        "整理下一阶段改进清单：Dashboard 下钻、端口风险画像、配置差异一键比对、任务/审计普通页面和权限细化",
+        "登录页改为更适配 1080p 的 Tabler 大尺寸卡片，并统一 NETMASTER 品牌标识",
+        "管理设备导入和 Excel 批量部署新增本地 xlsx 模板下载，离网环境无需外部依赖",
+        "Tabler 交互收口第二批：保存配置、端口绑定/解绑、ACL 删除、终端漫游和 Excel 批量下发改为统一确认弹窗",
+        "告警处理备注和用户重置密码改为统一输入弹窗，减少浏览器原生 prompt",
+        "Tabler 风格交互增强：新增统一 Toast 和高风险操作确认弹窗",
+        "删除设备、含密码资产导出、完整数据包导入、旧版资产导入和批量备份改为统一确认流程",
+        "账号安全增强：连续登录失败 5 次临时锁定 10 分钟，密码统一要求至少 8 位且包含字母和数字",
+        "用户管理增加最后一个启用系统管理员保护，避免误禁用或降级导致无人可管理系统",
+        "新增两级用户角色：系统管理员和运维操作员，系统设置、数据备份恢复和用户管理仅管理员可操作",
+        "系统设置页新增用户管理，可新增用户、调整角色/状态、重置密码",
+        "设备资产编辑修复空密码覆盖风险，密码留空时保留原密码",
+        "设备资产导出拆分为普通资产清单和含密码敏感导出，敏感导出仅系统管理员可用并写入审计",
+        "数据备份页面新增旧版本资产导入：可从旧 net_assets.db 读取 switches 表并导入交换机资产",
+        "Tabler 左侧菜单信息架构调整：设备准入、管理设置分组重新排序",
+        "首页 Dashboard 指标继续优化：备份天数、全量保存配置时间、本月绑定变更和最近绑定明细",
+        "终端漫游页终端列表支持按当前接入交换机过滤，未选择交换机时才显示全部绑定终端",
+        "版本信息弹窗聚焦版本说明，定时备份成功后自动保存开关统一收口到系统设置页",
+        "侧边栏品牌标识改为 NETMASTER，并去除重复品牌文字",
         "告警中心新增确认/忽略/备注闭环、近 7 天趋势和状态筛选，顶部重复告警按钮已移除",
         "日志分类修正：SOFTCAR ARP DROP 单独归为 ARP限速/控制平面保护，不再误归 ACL/丢包",
         "首页看板新增当前网络告警卡片，直接展示高危/中风险/采集失败并可打开告警中心",
@@ -76,65 +296,107 @@ APP_VERSION_INFO = {
     "backup": "project_backup_20260501_114009",
 }
 
-# 馃毇 鍏抽敭绔彛淇濇姢鍏抽敭璇?(涓嶅尯鍒嗗ぇ灏忓啓)
-# 鍙绔彛鎻忚堪鍖呭惈杩欎簺璇嶏紝绯荤粺灏嗘嫆缁濅慨鏀?
+# 关键端口保护关键词，不区分大小写。
+# 端口描述包含这些词时，系统拒绝修改，避免误操作上联、核心和互联端口。
 PROTECTED_KEYWORDS = ['Uplink', 'Trunk', 'Core', 'Connect', 'To', 'hexin', 'huiju', 'link']
 
-# 澶囦唤鏂囦欢瀛樻斁鐩綍
-BACKUP_ROOT = 'backups'
-if not os.path.exists(BACKUP_ROOT):
-    os.makedirs(BACKUP_ROOT)
+# 备份文件存放目录
+BACKUP_ROOT = str(BACKUP_DIR)
+os.makedirs(BACKUP_ROOT, exist_ok=True)
 
-MAC_SYNC_LOCK = threading.Lock()
-MAC_SYNC_STATE_LOCK = threading.Lock()
 MAC_SYNC_SWITCH_TIMEOUT = 90
 MAC_SYNC_MAX_WORKERS = 4
-MAC_SYNC_STATE = {
-    'running': False,
-    'status': 'idle',
-    'message': '尚未执行同步',
-    'started_at': '',
-    'finished_at': '',
-    'actor': '',
-    'current_switch_index': 0,
-    'total_switches': 0,
-    'current_switch_ip': '',
-    'current_switch_name': '',
-    'synced': 0,
-    'found': 0,
-    'created': 0,
-    'updated': 0,
-    'unchanged': 0,
-    'errors': [],
-}
+MAC_SYNC_STATE_STORE = MacSyncStateStore()
+MAC_SYNC_LOCK = MAC_SYNC_STATE_STORE.lock
 
-# === 鐧诲綍绠＄悊鍣ㄩ厤缃?===
+# 登录管理器配置
 login_manager = LoginManager()
 login_manager.init_app(app)
-login_manager.login_view = 'login' 
+login_manager.login_view = 'auth_pages.login'
 
 class User(UserMixin):
-    def __init__(self, id, username):
+    def __init__(self, id, username, role='operator', display_name=''):
         self.id = id
         self.username = username
+        self.role = role or 'operator'
+        self.display_name = display_name or username
+
+    @property
+    def is_admin(self):
+        return self.role == 'admin'
 
 @login_manager.user_loader
 def load_user(user_id):
     user_data = db.get_user_by_id(user_id)
     if user_data:
-        return User(id=user_data['id'], username=user_data['username'])
+        return User(
+            id=user_data['id'],
+            username=user_data['username'],
+            role=user_data['role'] if 'role' in user_data.keys() else 'operator',
+            display_name=user_data['display_name'] if 'display_name' in user_data.keys() else user_data['username'],
+        )
     return None
 
-# === 杈呭姪鍑芥暟锛氭櫤鑳借皟搴﹀簳灞傞┍鍔?===
+
+def admin_required(func):
+    def wrapper(*args, **kwargs):
+        if not current_user.is_authenticated:
+            return login_manager.unauthorized()
+        if not getattr(current_user, 'is_admin', False):
+            if request.path.startswith('/api/'):
+                return json_error('当前账号无系统管理员权限', 403)
+            abort(403)
+        return func(*args, **kwargs)
+    wrapper.__name__ = func.__name__
+    return wrapper
+
+
+ROLE_PERMISSIONS = {
+    'admin': {'*'},
+    'operator': {
+        'switch.write',
+        'access.write',
+        'roam.write',
+        'alarm.manage',
+        'asset.manage',
+        'audit.view',
+        'task.view',
+        'backup.view',
+    },
+}
+
+
+def has_permission(permission):
+    if not current_user.is_authenticated:
+        return False
+    perms = ROLE_PERMISSIONS.get(getattr(current_user, 'role', 'operator'), set())
+    return '*' in perms or permission in perms
+
+
+def permission_required(permission):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            if not current_user.is_authenticated:
+                return login_manager.unauthorized()
+            if not has_permission(permission):
+                if request.path.startswith('/api/') or request.path.startswith(('/get_', '/set_', '/bind_', '/del_', '/save_', '/batch_', '/test_')):
+                    return json_error(f'当前账号缺少权限：{permission}', 403)
+                abort(403)
+            return func(*args, **kwargs)
+        wrapper.__name__ = func.__name__
+        return wrapper
+    return decorator
+
+# 交换机驱动和通用辅助函数
 def get_manager(data):
     port = int(data.get('port', 22)) 
-    # 灏濊瘯浠庤姹備腑鑾峰彇鍘傚晢锛屽鏋滄病鏈夛紝灏卞幓鏁版嵁搴撻噷鏍规嵁 IP 鏌ュ嚭鏉?
+    # 优先使用请求中的厂商；未提供时按 IP 从资产库读取。
     vendor = data.get('vendor')
     if not vendor:
         target_sw = db.get_switch_by_ip(data['ip'])
         vendor = target_sw.get('vendor', 'h3c') if target_sw else 'h3c'
         
-    # 馃挕 鏍规嵁鍘傚晢鏅鸿兘璋冨害椹卞姩
+    # 根据厂商选择对应驱动。
     if vendor.lower() == 'huawei':
         return HuaweiManager(data['ip'], data['user'], data['pass'], port)
     return H3CManager(data['ip'], data['user'], data['pass'], port)
@@ -149,98 +411,6 @@ def get_json_data():
     if not isinstance(data, dict):
         raise ValueError('请求体必须为 JSON 对象')
     return data
-
-
-def require_fields(data, fields):
-    missing = []
-    for field in fields:
-        value = data.get(field)
-        if value is None or str(value).strip() == '':
-            missing.append(field)
-    if missing:
-        raise ValueError(f"缺少必填参数：{', '.join(missing)}")
-
-
-def normalize_ip(value, field_name='IP'):
-    text = str(value).strip()
-    try:
-        ipaddress.ip_address(text)
-    except ValueError as exc:
-        raise ValueError(f'{field_name} 格式不正确') from exc
-    return text
-
-
-def normalize_port(value):
-    try:
-        port = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError('端口必须是数字') from exc
-    if not 1 <= port <= 65535:
-        raise ValueError('端口范围必须在 1-65535 之间')
-    return port
-
-
-def normalize_vlan(value, field_name='VLAN', allow_empty=False):
-    text = str(value or '').strip()
-    if not text:
-        if allow_empty:
-            return ''
-        raise ValueError(f'{field_name} 不能为空')
-    if not text.isdigit():
-        raise ValueError(f'{field_name} 必须是数字')
-    vlan = int(text)
-    if not 1 <= vlan <= 4094:
-        raise ValueError(f'{field_name} 范围必须在 1-4094 之间')
-    return str(vlan)
-
-
-def normalize_vendor(value):
-    vendor = str(value or 'h3c').strip().lower()
-    if vendor not in {'h3c', 'huawei', 'ruijie'}:
-        raise ValueError('厂商仅支持 h3c、huawei 或 ruijie')
-    return vendor
-
-
-def normalize_switch_role(value):
-    role = str(value or 'access').strip().lower()
-    if role not in {'access', 'backup'}:
-        raise ValueError('设备角色仅支持 access 或 backup')
-    return role
-
-
-def normalize_bool_flag(value, default=True):
-    if value is None:
-        return 1 if default else 0
-    if isinstance(value, bool):
-        return 1 if value else 0
-    text = str(value).strip().lower()
-    if text in {'1', 'true', 'yes', 'on', '启用', '是'}:
-        return 1
-    if text in {'0', 'false', 'no', 'off', '禁用', '否'}:
-        return 0
-    raise ValueError('布尔字段只能是启用/禁用或 true/false')
-
-
-def normalize_mac(value, field_name='MAC'):
-    text = str(value).strip()
-    clean = text.replace(':', '').replace('-', '').replace('.', '')
-    if len(clean) != 12 or any(ch not in '0123456789abcdefABCDEF' for ch in clean):
-        raise ValueError(f'{field_name} 格式不正确')
-    return text
-
-
-def normalize_mode(value, field_name='模式'):
-    mode = str(value or 'access').strip().lower()
-    if mode not in {'access', 'trunk'}:
-        raise ValueError(f'{field_name} 仅支持 access 或 trunk')
-    return mode
-
-
-def normalize_acl_number(value, field_name='ACL 组号'):
-    number = int(str(value or '4000').strip())
-    if number < 2000 or number > 4999:
-        raise ValueError(f'{field_name} 必须在 2000-4999 范围内')
-    return str(number)
 
 
 def get_runtime_settings():
@@ -272,59 +442,6 @@ def format_switch_log(raw_log):
     return text.replace('<', '&lt;').replace('>', '&gt;')
 
 
-def backup_root_abs():
-    return os.path.abspath(BACKUP_ROOT)
-
-
-def resolve_backup_file(rel_path):
-    text = str(rel_path or '').strip().replace('\\', os.sep).replace('/', os.sep)
-    if not text or text.startswith(os.sep) or '..' in text.split(os.sep):
-        raise ValueError('备份文件路径不合法')
-    full_path = os.path.abspath(os.path.join(backup_root_abs(), text))
-    if not full_path.startswith(backup_root_abs() + os.sep):
-        raise ValueError('备份文件路径越界')
-    if not os.path.isfile(full_path):
-        raise ValueError('备份文件不存在')
-    return full_path
-
-
-def read_backup_text(rel_path):
-    full_path = resolve_backup_file(rel_path)
-    with open(full_path, 'r', encoding='utf-8', errors='replace') as fh:
-        return fh.read().splitlines()
-
-
-def list_backup_config_files(limit=500):
-    root = backup_root_abs()
-    files = []
-    for dirpath, _, filenames in os.walk(root):
-        for filename in filenames:
-            if not filename.lower().endswith(('.cfg', '.txt')):
-                continue
-            full_path = os.path.join(dirpath, filename)
-            rel_path = os.path.relpath(full_path, root).replace(os.sep, '/')
-            stat = os.stat(full_path)
-            date_part = rel_path.split('/', 1)[0] if '/' in rel_path else ''
-            base_name = os.path.splitext(filename)[0]
-            device_name = base_name
-            device_ip = ''
-            if '_' in base_name:
-                device_name, device_ip = base_name.rsplit('_', 1)
-            files.append(
-                {
-                    'path': rel_path,
-                    'date': date_part,
-                    'filename': filename,
-                    'device_name': device_name,
-                    'device_ip': device_ip,
-                    'size': stat.st_size,
-                    'mtime': datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
-                }
-            )
-    files.sort(key=lambda item: (item['date'], item['mtime'], item['filename']), reverse=True)
-    return files[:limit]
-
-
 def csv_text(headers, rows):
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=headers, extrasaction='ignore')
@@ -332,411 +449,6 @@ def csv_text(headers, rows):
     for row in rows:
         writer.writerow({key: row.get(key, '') for key in headers})
     return '\ufeff' + buffer.getvalue()
-
-
-def create_data_package():
-    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    memory_file = io.BytesIO()
-    db_path = os.path.abspath(db.DB_NAME)
-    key_path = os.path.abspath(db.KEY_FILE)
-    switch_headers = ['id', 'name', 'ip', 'port', 'username', 'vendor', 'role']
-    binding_headers = ['mac_address', 'ip_address', 'switch_ip', 'switch_name', 'port', 'vlan', 'mode', 'update_time']
-    manifest = {
-        'app': 'NetMaster',
-        'version': APP_VERSION,
-        'created_at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'contains': ['net_assets.db', 'net_assets.key', 'switch_assets.csv', 'mac_bindings.csv'],
-        'note': 'net_assets.db 与 net_assets.key 必须成对保存，否则加密后的交换机密码无法解密。',
-    }
-    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as package:
-        package.write(db_path, 'net_assets.db')
-        if os.path.exists(key_path):
-            package.write(key_path, 'net_assets.key')
-        package.writestr('switch_assets.csv', csv_text(switch_headers, db.get_all_switches()))
-        package.writestr('mac_bindings.csv', csv_text(binding_headers, db.get_mac_bindings(limit=100000)))
-        package.writestr('manifest.json', json.dumps(manifest, ensure_ascii=False, indent=2))
-    memory_file.seek(0)
-    return memory_file, f'netmaster_data_package_{timestamp}.zip'
-
-
-def write_data_package_to_dir(target_dir=None):
-    settings = db.get_system_settings()
-    target_dir = target_dir or settings.get('auto_data_export_dir') or 'data_packages'
-    target_dir = os.path.abspath(target_dir)
-    os.makedirs(target_dir, exist_ok=True)
-    memory_file, filename = create_data_package()
-    full_path = os.path.join(target_dir, filename)
-    with open(full_path, 'wb') as fh:
-        fh.write(memory_file.getvalue())
-    return full_path
-
-
-def restore_data_package(file_storage):
-    raw = file_storage.read()
-    if not raw:
-        raise ValueError('上传文件为空')
-    try:
-        package = zipfile.ZipFile(io.BytesIO(raw), 'r')
-    except zipfile.BadZipFile:
-        raise ValueError('导入文件不是有效 zip 数据包')
-    names = set(package.namelist())
-    if 'net_assets.db' not in names:
-        raise ValueError('数据包缺少 net_assets.db')
-
-    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    restore_backup_dir = os.path.abspath(os.path.join('data_restore_backups', timestamp))
-    os.makedirs(restore_backup_dir, exist_ok=True)
-    db_path = os.path.abspath(db.DB_NAME)
-    key_path = os.path.abspath(db.KEY_FILE)
-    if os.path.exists(db_path):
-        shutil.copy2(db_path, os.path.join(restore_backup_dir, 'net_assets.db'))
-    if os.path.exists(key_path):
-        shutil.copy2(key_path, os.path.join(restore_backup_dir, 'net_assets.key'))
-
-    tmp_db = db_path + f'.import_{timestamp}.tmp'
-    tmp_key = key_path + f'.import_{timestamp}.tmp'
-    try:
-        with open(tmp_db, 'wb') as fh:
-            fh.write(package.read('net_assets.db'))
-        if 'net_assets.key' in names:
-            with open(tmp_key, 'wb') as fh:
-                fh.write(package.read('net_assets.key'))
-        shutil.move(tmp_db, db_path)
-        if os.path.exists(tmp_key):
-            shutil.move(tmp_key, key_path)
-    finally:
-        for path in [tmp_db, tmp_key]:
-            if os.path.exists(path):
-                os.remove(path)
-        package.close()
-    return restore_backup_dir
-
-
-def preview_data_package(file_storage):
-    raw = file_storage.read()
-    if not raw:
-        raise ValueError('上传文件为空')
-    try:
-        package = zipfile.ZipFile(io.BytesIO(raw), 'r')
-    except zipfile.BadZipFile:
-        raise ValueError('导入文件不是有效 zip 数据包')
-    names = set(package.namelist())
-    manifest = {}
-    if 'manifest.json' in names:
-        try:
-            manifest = json.loads(package.read('manifest.json').decode('utf-8', errors='replace'))
-        except Exception:
-            manifest = {}
-    result = {
-        'has_db': 'net_assets.db' in names,
-        'has_key': 'net_assets.key' in names,
-        'has_switch_csv': 'switch_assets.csv' in names,
-        'has_binding_csv': 'mac_bindings.csv' in names,
-        'manifest': manifest,
-        'files': sorted(names),
-    }
-    if 'switch_assets.csv' in names:
-        result['switch_csv_rows'] = max(0, len(package.read('switch_assets.csv').decode('utf-8-sig', errors='replace').splitlines()) - 1)
-    if 'mac_bindings.csv' in names:
-        result['binding_csv_rows'] = max(0, len(package.read('mac_bindings.csv').decode('utf-8-sig', errors='replace').splitlines()) - 1)
-    package.close()
-    return result
-
-
-def parse_bindings_from_config(config_text, switch_ip):
-    bindings = []
-    current_iface = ''
-    current_vlan = '1'
-    current_mode = 'trunk'
-    for raw_line in str(config_text or '').splitlines():
-        line = raw_line.strip()
-        if line.startswith('interface '):
-            full_name = line.split(' ', 1)[1].strip()
-            current_iface = full_name.replace('Ten-GigabitEthernet', 'XGE')\
-                                     .replace('XGigabitEthernet', 'XGE')\
-                                     .replace('M-GigabitEthernet', 'MGE')\
-                                     .replace('GigabitEthernet', 'GE')\
-                                     .replace('Bridge-Aggregation', 'BAGG')\
-                                     .replace('Ethernet', 'Eth')
-            current_vlan = '1'
-            current_mode = 'trunk'
-            continue
-        if not current_iface:
-            continue
-        if line.startswith(('port access vlan', 'port default vlan')):
-            parts = line.split()
-            if parts:
-                current_vlan = parts[-1]
-        elif line.startswith('port trunk pvid vlan'):
-            parts = line.split()
-            if parts:
-                current_vlan = parts[-1]
-        elif 'ip verify source' in line or 'source check user-bind enable' in line:
-            current_mode = 'access'
-        if ('ip source binding' in line or 'user-bind static' in line) and 'ip-address' in line:
-            ip_match = re.search(r'ip-address\s+([\d.]+)', line)
-            mac_match = re.search(r'mac-address\s+([0-9a-fA-F:.\-]+)', line)
-            vlan_match = re.search(r'\bvlan\s+(\d+)', line)
-            if ip_match and mac_match:
-                bindings.append({
-                    'switch_ip': switch_ip,
-                    'switch_port': current_iface,
-                    'ip': ip_match.group(1),
-                    'mac': mac_match.group(1),
-                    'vlan': vlan_match.group(1) if vlan_match else current_vlan,
-                    'mode': current_mode if not vlan_match else 'trunk',
-                })
-    return bindings
-
-
-def import_bindings_from_backup_files(limit=2000, apply=False):
-    files = list_backup_config_files(limit=limit)
-    found = 0
-    unique_map = {}
-    duplicate_count = 0
-    created = 0
-    updated = 0
-    unchanged = 0
-    errors = []
-    preview = []
-    for item in files:
-        switch_ip = item.get('device_ip') or ''
-        try:
-            normalize_ip(switch_ip, '备份文件交换机 IP')
-        except ValueError:
-            continue
-        try:
-            lines = read_backup_text(item['path'])
-            bindings = parse_bindings_from_config('\n'.join(lines), switch_ip)
-            found += len(bindings)
-            for binding in bindings:
-                key = (normalize_mac(binding['mac']).lower(), binding['ip'])
-                if key in unique_map:
-                    duplicate_count += 1
-                    old = unique_map[key]
-                    if item.get('date', '') >= old.get('backup_date', ''):
-                        unique_map[key] = {**binding, 'backup_file': item['path'], 'backup_date': item.get('date', '')}
-                else:
-                    unique_map[key] = {**binding, 'backup_file': item['path'], 'backup_date': item.get('date', '')}
-        except Exception as exc:
-            errors.append(f"{item.get('path')}: {exc}")
-    if apply:
-        for binding in unique_map.values():
-            action = save_binding_state(
-                binding['switch_ip'],
-                binding['switch_port'],
-                binding['vlan'],
-                binding['ip'],
-                binding['mac'],
-                binding['mode'],
-            )
-            if action == 'created':
-                created += 1
-            elif action == 'updated':
-                updated += 1
-            else:
-                unchanged += 1
-    preview = list(unique_map.values())[:200]
-    return {
-        'files': len(files),
-        'found': found,
-        'unique_terminals': len(unique_map),
-        'duplicates': duplicate_count,
-        'created': created,
-        'updated': updated,
-        'unchanged': unchanged,
-        'errors': errors[:20],
-        'preview': preview,
-    }
-
-
-def analyze_alarm_log_text(text):
-    rules = [
-        {'level': 'critical', 'category': '环路/风暴', 'score': 35, 'words': ['loop', 'storm', 'broadcast storm', 'mac-flapping', 'mac address flapping'], 'suggestion': '疑似环路、广播风暴或 MAC 漂移，建议立即检查 STP、下联小交换机、近期新增网线和异常端口。'},
-        {'level': 'critical', 'category': '硬件/环境', 'score': 30, 'words': ['fan failed', 'power failed', 'temperature', 'overheat', 'over-temperature', 'voltage', 'psu', 'fatal', 'panic'], 'suggestion': '存在硬件或环境异常，建议检查风扇、电源、温度、机柜散热和设备面板告警。'},
-        {'level': 'critical', 'category': '链路/端口中断', 'score': 18, 'words': ['link down', 'line protocol is down', 'interface down', 'changed state to down', 'unreachable'], 'suggestion': '存在链路或端口中断记录，建议核对高频端口的光模块、网线、对端设备和上联链路。'},
-        {'level': 'warning', 'category': '链路抖动', 'score': 10, 'words': ['flap', 'updown', 'link up', 'changed state to up', 'port up'], 'suggestion': '存在端口抖动记录，建议按高频端口检查终端、网线、水晶头、光模块和速率双工协商。'},
-        {'level': 'warning', 'category': 'STP 变化', 'score': 12, 'words': ['stp', 'spanning tree', 'topology change', 'tc event'], 'suggestion': '存在 STP 拓扑变化，建议确认是否有非法接入、小交换机、环路恢复或上联切换。'},
-        {'level': 'warning', 'category': '认证/登录', 'score': 8, 'words': ['login failed', 'authentication failed', 'auth fail', 'password failed', 'invalid user', 'illegal user', 'failed password', 'sshs_auth_fail', 'telnet login failed'], 'suggestion': '存在认证或登录失败，建议核对来源地址、账号权限、弱口令尝试和堡垒机登录记录。'},
-        {'level': 'warning', 'category': 'ARP限速/控制平面保护', 'score': 14, 'words': ['softcar drop', 'pkttype=arp'], 'require_all': True, 'suggestion': '发现 ARP 报文触发 SOFTCAR 控制平面保护丢弃，建议优先检查高频端口、源 MAC、ARP 异常、环路或下挂设备广播异常。'},
-        {'level': 'warning', 'category': 'ACL/策略丢弃', 'score': 6, 'words': ['acl', 'deny', 'packet filter'], 'suggestion': '存在 ACL 或策略丢弃关键字，建议核对安全策略、命中方向和业务访问是否符合预期。'},
-        {'level': 'warning', 'category': '资源/性能', 'score': 10, 'words': ['cpu', 'memory', 'high utilization', 'threshold', 'busy'], 'suggestion': '存在资源或性能告警，建议检查 CPU、内存、广播流量、日志风暴和管理进程状态。'},
-        {'level': 'warning', 'category': '超时/管理链路', 'score': 6, 'words': ['timeout', 'timed out', 'ntp', 'snmp', 'radius', 'tacacs'], 'suggestion': '存在超时或管理链路关键字，建议检查管理网络、NTP/SNMP/RADIUS/TACACS 可达性和设备负载。'},
-    ]
-    lines = [line.strip() for line in str(text or '').splitlines() if line.strip()]
-    scan_lines = []
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        if 'softcar drop' in line.lower() and index + 1 < len(lines) and 'pkttype=' in lines[index + 1].lower():
-            scan_lines.append(f"{line} {lines[index + 1]}")
-            index += 2
-            continue
-        scan_lines.append(line)
-        index += 1
-    matched = []
-    critical = 0
-    warning = 0
-    risk_score = 0
-    suggestion_map = {}
-    category_counts = {}
-    port_counts = {}
-    port_pattern = re.compile(r'\b(?:GE|XGE|GigabitEthernet|Ten-GigabitEthernet|FortyGigE|Eth|Ethernet|Bridge-Aggregation|Vlan-interface)\s*\d+(?:/\d+){0,3}\b', re.I)
-    def normalize_log_port(port):
-        text = re.sub(r'\s+', '', str(port or '')).upper()
-        replacements = [
-            ('TEN-GIGABITETHERNET', 'XGE'),
-            ('GIGABITETHERNET', 'GE'),
-            ('FORTYGIGE', 'FGE'),
-            ('ETHERNET', 'ETH'),
-            ('BRIDGE-AGGREGATION', 'BAGG'),
-            ('VLAN-INTERFACE', 'VLANIF'),
-        ]
-        for old, new in replacements:
-            if text.startswith(old):
-                return new + text[len(old):]
-        return text
-    for line in scan_lines[-500:]:
-        lower = line.lower()
-        benign_auth = any(
-            word in lower
-            for word in [
-                'auth_success',
-                'authentication succeeded',
-                'passed password authentication',
-                'logged out',
-                'disconnect',
-                'connected to the server successfully',
-                'sshs_connect',
-                'sshs_log',
-            ]
-        )
-        if benign_auth:
-            continue
-        for rule in rules:
-            matched_rule = all(word in lower for word in rule['words']) if rule.get('require_all') else any(word in lower for word in rule['words'])
-            if matched_rule:
-                level = rule['level']
-                category = rule['category']
-                if level == 'critical':
-                    critical += 1
-                else:
-                    warning += 1
-                risk_score += rule['score']
-                category_counts[category] = category_counts.get(category, 0) + 1
-                suggestion_map[category] = rule['suggestion']
-                ports = [normalize_log_port(port) for port in port_pattern.findall(line)]
-                for port in ports:
-                    port_counts[port] = port_counts.get(port, 0) + 1
-                matched.append({'level': level, 'category': category, 'ports': ports, 'line': line})
-                break
-    if critical >= 5 or risk_score >= 80:
-        risk_level = 'high'
-        headline = '高风险：发现多条严重告警，建议优先排查环路、硬件环境和关键链路。'
-    elif critical or warning >= 5 or risk_score >= 30:
-        risk_level = 'medium'
-        headline = '中风险：存在需要关注的告警，建议按分类和高频端口逐项核对。'
-    elif warning:
-        risk_level = 'low'
-        headline = '低风险：发现少量告警关键字，建议观察趋势并核对相关端口。'
-    else:
-        risk_level = 'normal'
-        headline = '正常：未发现明显严重告警关键字，可继续观察。'
-    top_ports = [{'port': port, 'count': count} for port, count in sorted(port_counts.items(), key=lambda item: item[1], reverse=True)[:10]]
-    suggestions = list(suggestion_map.values())
-    if top_ports:
-        suggestions.insert(0, f"高频端口：{', '.join([item['port'] + ' x' + str(item['count']) for item in top_ports[:5]])}。建议优先核对这些端口。")
-    if not suggestions:
-        suggestions.append('未发现明显严重告警关键字，可继续观察。')
-    return {
-        'total_lines': len(lines),
-        'critical': critical,
-        'warning': warning,
-        'risk_score': min(risk_score, 100),
-        'risk_level': risk_level,
-        'headline': headline,
-        'category_counts': category_counts,
-        'top_ports': top_ports,
-        'matched': matched[-100:],
-        'suggestions': suggestions,
-    }
-
-
-def collect_switch_alarm_report(switch_ip):
-    runtime = get_switch_runtime_data(switch_ip)
-    switch_row = db.get_switch_by_ip(switch_ip) or {}
-    mgr = get_manager(runtime)
-    raw = mgr.get_alarm_logs()
-    analysis = analyze_alarm_log_text(raw)
-    db.add_switch_alarm_report(
-        switch_ip=switch_ip,
-        switch_name=switch_row.get('name', ''),
-        vendor=runtime.get('vendor', ''),
-        status='成功',
-        analysis=analysis,
-    )
-    return {'raw': raw, 'analysis': analysis, 'switch': switch_row}
-
-
-ALARM_COMMAND_GUIDE = {
-    '环路/风暴': [
-        {'cmd': 'display stp brief', 'desc': '查看 STP 根桥、端口角色和阻塞状态，确认是否存在异常拓扑变化。'},
-        {'cmd': 'display mac-address flapping', 'desc': '查看 MAC 漂移记录，定位疑似环路或来回漂移的端口。'},
-        {'cmd': 'display interface brief', 'desc': '快速查看端口 up/down 和流量异常端口。'},
-    ],
-    '链路/端口中断': [
-        {'cmd': 'display interface <端口>', 'desc': '查看端口物理状态、错误包、速率双工、收发光功率等详细信息。'},
-        {'cmd': 'display transceiver diagnosis interface <端口>', 'desc': '查看光模块诊断信息，排查光功率、温度、电压异常。'},
-    ],
-    '链路抖动': [
-        {'cmd': 'display logbuffer | include <端口>', 'desc': '按端口过滤日志，确认抖动时间和频率。'},
-        {'cmd': 'display interface <端口>', 'desc': '检查 CRC、input error、协商状态和端口重启计数。'},
-    ],
-    'STP 变化': [
-        {'cmd': 'display stp brief', 'desc': '查看 STP 端口角色和状态，确认是否频繁变化。'},
-        {'cmd': 'display stp history', 'desc': '查看 STP 历史变化记录，定位触发拓扑变化的端口。'},
-    ],
-    'ARP限速/控制平面保护': [
-        {'cmd': 'display interface <高频端口>', 'desc': '检查高频端口广播/错误包/流量状态，确认 ARP 来源方向。'},
-        {'cmd': 'display mac-address <源MAC>', 'desc': '定位日志中的源 MAC 当前学习在哪个端口或下游链路。'},
-        {'cmd': 'display arp | include <源MAC或IP>', 'desc': '关联源 MAC 与 IP，判断是否为异常终端、网关或下挂设备。'},
-        {'cmd': 'display stp brief', 'desc': '确认是否存在环路或 STP 拓扑异常导致 ARP 广播异常。'},
-        {'cmd': 'display logbuffer | include SOFTCAR|ARP|<端口>', 'desc': '查看 SOFTCAR ARP DROP 的频率、端口和上下文。'},
-    ],
-    'ACL/策略丢弃': [
-        {'cmd': 'display acl all', 'desc': '查看 ACL 规则，确认是否有误拦截或规则顺序问题。'},
-        {'cmd': 'display packet-filter interface <端口>', 'desc': '查看端口方向上绑定的包过滤策略。'},
-        {'cmd': 'display traffic classifier user-defined', 'desc': '查看流分类，辅助排查 QoS/安全策略命中。'},
-    ],
-    '认证/登录': [
-        {'cmd': 'display local-user', 'desc': '核对本地账号和权限。'},
-        {'cmd': 'display ssh server status', 'desc': '查看 SSH 服务状态和登录限制。'},
-        {'cmd': 'display logbuffer | include LOGIN|AUTH|SSHS', 'desc': '过滤登录认证日志，确认是否存在失败尝试。'},
-    ],
-    '资源/性能': [
-        {'cmd': 'display cpu-usage', 'desc': '查看 CPU 使用率和高负载进程。'},
-        {'cmd': 'display memory', 'desc': '查看内存使用情况。'},
-    ],
-    '超时/管理链路': [
-        {'cmd': 'ping <网管服务器IP>', 'desc': '验证到网管、认证或日志服务器的连通性。'},
-        {'cmd': 'display ntp-service status', 'desc': '检查时间同步状态。'},
-    ],
-}
-
-
-def build_alarm_command_suggestions(category_counts):
-    commands = []
-    seen = set()
-    for category in sorted((category_counts or {}).keys(), key=lambda key: category_counts.get(key, 0), reverse=True):
-        for item in ALARM_COMMAND_GUIDE.get(category, []):
-            if item['cmd'] in seen:
-                continue
-            seen.add(item['cmd'])
-            commands.append({'category': category, **item})
-            if len(commands) >= 8:
-                return commands
-    return commands
-
 
 def get_switch_runtime_data(switch_ip):
     target_sw = db.get_switch_by_ip(switch_ip)
@@ -832,12 +544,6 @@ def port_has_binding(mgr, interface_name, ip_address, mac_address):
     return False
 
 
-def binding_matches_query(binding, query_type, value):
-    if query_type == 'ip':
-        return binding.get('ip_address') == value
-    return normalize_mac(binding.get('mac_address', '')) == value
-
-
 def save_binding_state(switch_ip, interface_name, vlan, bind_ip, mac, mode):
     return db.upsert_mac_binding(
         mac_address=normalize_mac(mac),
@@ -850,2042 +556,337 @@ def save_binding_state(switch_ip, interface_name, vlan, bind_ip, mac, mode):
 
 
 def persist_switch_bindings(switch_row, all_bindings, query_type=None, query_value=None):
-    changed = 0
-    found = 0
-    created = 0
-    updated = 0
-    unchanged = 0
-    matched = None
-    errors = []
-
-    for binding in all_bindings or []:
-        try:
-            interface_name = binding.get('switch_port') or binding.get('port')
-            bind_ip = binding.get('ip')
-            mac = binding.get('mac')
-            if not interface_name or not bind_ip or not mac or bind_ip == 'Unknown' or mac == 'Unknown':
-                continue
-            mode = normalize_mode(binding.get('mode', 'access'))
-            vlan = str(binding.get('vlan') or '').strip()
-            action = save_binding_state(switch_row['ip'], interface_name, vlan, bind_ip, mac, mode)
-            found += 1
-            if action == 'created':
-                created += 1
-                changed += 1
-            elif action == 'updated':
-                updated += 1
-                changed += 1
-            else:
-                unchanged += 1
-            saved = {
-                'mac_address': normalize_mac(mac),
-                'ip_address': normalize_ip(bind_ip, '绑定 IP'),
-                'switch_ip': switch_row['ip'],
-                'port': interface_name,
-                'vlan': vlan,
-                'mode': mode,
-            }
-            if query_type and binding_matches_query(saved, query_type, query_value):
-                matched = saved
-        except Exception as exc:
-            errors.append(f"binding: {exc}")
-
-    return {
-        'synced': changed,
-        'found': found,
-        'created': created,
-        'updated': updated,
-        'unchanged': unchanged,
-        'matched': matched,
-        'errors': errors,
-    }
+    return service_persist_switch_bindings(
+        switch_row,
+        all_bindings,
+        save_binding_state,
+        query_type,
+        query_value,
+    )
 
 
 def sync_switch_bindings(switch_row, query_type=None, query_value=None):
-    runtime = {
-        'ip': switch_row['ip'],
-        'user': switch_row['username'],
-        'pass': switch_row['password'],
-        'port': switch_row.get('port', 22),
-        'vendor': switch_row.get('vendor', 'h3c'),
-    }
-    mgr = get_manager(runtime)
-    return persist_switch_bindings(
+    return service_sync_switch_bindings(
         switch_row,
-        mgr.get_all_bindings(),
+        get_manager,
+        persist_switch_bindings,
         query_type,
         query_value,
     )
 
 
 def sync_all_switch_bindings(query_type=None, query_value=None):
-    total_synced = 0
-    scanned_switches = 0
-    matched = None
-    errors = []
-
-    for sw in db.get_terminal_sync_switches():
-        scanned_switches += 1
-        try:
-            result = sync_switch_bindings_with_timeout(sw, query_type, query_value)
-            total_synced += result['synced']
-            errors.extend([f"{sw['ip']} {err}" for err in result['errors'][:5]])
-            if result['matched'] and not matched:
-                matched = result['matched']
-                break
-        except Exception as exc:
-            errors.append(f"{sw.get('ip', 'Unknown')}: {exc}")
-
-    return {
-        'scanned_switches': scanned_switches,
-        'synced': total_synced,
-        'matched': matched,
-        'errors': errors,
-    }
+    return service_sync_all_switch_bindings(
+        db,
+        sync_switch_bindings_with_timeout,
+        query_type,
+        query_value,
+    )
 
 
 def scan_one_switch_for_terminal(source_switch_ip, query):
-    source_switch_ip = normalize_ip(source_switch_ip, '源交换机 IP')
-    sw = db.get_switch_by_ip(source_switch_ip)
-    if not sw:
-        raise ValueError(f"资产管理库未登记该源交换机 IP（{source_switch_ip}）")
-    query_type, query_value = normalize_terminal_lookup(query)
-    result = sync_switch_bindings_with_timeout(sw, query_type, query_value)
-    return {
-        'scanned_switches': 1,
-        'synced': result['synced'],
-        'matched': result['matched'],
-        'errors': [f"{source_switch_ip} {err}" for err in result.get('errors', [])],
-    }
+    return service_scan_one_switch_for_terminal(
+        db,
+        source_switch_ip,
+        query,
+        normalize_ip,
+        normalize_terminal_lookup,
+        sync_switch_bindings_with_timeout,
+    )
 
 
 def read_switch_bindings_with_timeout(sw, timeout=None):
     timeout = timeout or get_mac_sync_timeout()
-    worker_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mac_sync_worker.py')
-    payload = {
-        'switch': {
-            'ip': sw.get('ip'),
-            'username': sw.get('username') or '',
-            'password': sw.get('password') or '',
-            'port': sw.get('port') or 22,
-            'vendor': sw.get('vendor') or 'h3c',
-        }
-    }
-    try:
-        completed = subprocess.run(
-            [sys.executable, worker_path],
-            input=json.dumps(payload, ensure_ascii=False),
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            timeout=timeout,
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            'bindings': [],
-            'errors': [f"设备扫描超过 {timeout} 秒，已终止子进程并跳过"],
-        }
-
-    stdout_lines = [line.strip() for line in (completed.stdout or '').splitlines() if line.strip()]
-    data = None
-    if stdout_lines:
-        try:
-            data = json.loads(stdout_lines[-1])
-        except json.JSONDecodeError:
-            data = None
-
-    if completed.returncode != 0 or not data:
-        detail = ''
-        if data and data.get('error'):
-            detail = data['error']
-        else:
-            detail = (completed.stderr or completed.stdout or '子进程无有效输出').strip()
-        return {'bindings': [], 'errors': [detail[:500]]}
-
-    if data.get('status') != 'success':
-        return {'bindings': [], 'errors': [str(data.get('error') or '设备读取失败')]}
-
-    return {'bindings': data.get('bindings') or [], 'errors': []}
+    return service_read_switch_bindings_with_timeout(sw, timeout)
 
 
 def sync_switch_bindings_with_timeout(sw, query_type=None, query_value=None, timeout=None):
     timeout = timeout or get_mac_sync_timeout()
-    read_result = read_switch_bindings_with_timeout(sw, timeout)
-    if read_result.get('errors'):
-        return {'synced': 0, 'matched': None, 'errors': read_result['errors']}
-    return persist_switch_bindings(sw, read_result.get('bindings') or [], query_type, query_value)
-
-
-def update_mac_sync_state(**kwargs):
-    with MAC_SYNC_STATE_LOCK:
-        MAC_SYNC_STATE.update(kwargs)
-        return dict(MAC_SYNC_STATE)
-
-
-def get_mac_sync_state_snapshot():
-    with MAC_SYNC_STATE_LOCK:
-        state = dict(MAC_SYNC_STATE)
-        state['errors'] = list(MAC_SYNC_STATE.get('errors', []))[-20:]
-        return state
-
-
-def log_mac_sync_switch_result(actor, client_ip, sw, result=None, error=None):
-    switch_ip = sw.get('ip', 'Unknown')
-    switch_name = sw.get('name') or switch_ip
-    vendor = sw.get('vendor') or 'unknown'
-    if error:
-        db.log_operation(
-            actor,
-            client_ip,
-            switch_ip,
-            "终端更新（单台设备）",
-            f"{switch_name} | 厂商:{vendor} | 失败原因:{error}",
-            "失败",
-        )
-        return
-
-    errors = result.get('errors') or []
-    synced = int(result.get('synced') or 0)
-    found = int(result.get('found') or 0)
-    created = int(result.get('created') or 0)
-    updated = int(result.get('updated') or 0)
-    unchanged = int(result.get('unchanged') or 0)
-    if errors:
-        db.log_operation(
-            actor,
-            client_ip,
-            switch_ip,
-            "终端更新（单台设备）",
-            f"{switch_name} | 厂商:{vendor} | 发现:{found} | 新增:{created} | 更新:{updated} | 未变:{unchanged} | 失败原因:{'; '.join(errors[:3])}",
-            "失败",
-        )
-        return
-
-    status = "成功" if found else "无绑定"
-    db.log_operation(
-        actor,
-        client_ip,
-        switch_ip,
-        "终端更新（单台设备）",
-        f"{switch_name} | 厂商:{vendor} | 发现:{found} | 新增:{created} | 更新:{updated} | 未变:{unchanged}",
-        status,
+    return service_sync_switch_bindings_with_timeout(
+        sw,
+        lambda switch_row: read_switch_bindings_with_timeout(switch_row, timeout),
+        persist_switch_bindings,
+        query_type,
+        query_value,
     )
 
 
+def update_mac_sync_state(**kwargs):
+    return MAC_SYNC_STATE_STORE.update(**kwargs)
+
+
+def get_mac_sync_state_snapshot():
+    return MAC_SYNC_STATE_STORE.snapshot()
+
+
+def log_mac_sync_switch_result(actor, client_ip, sw, result=None, error=None):
+    return service_log_mac_sync_switch_result(db, actor, client_ip, sw, result, error)
+
+
 def run_mac_bindings_sync(actor, client_ip, switch_ip=''):
-    if not MAC_SYNC_LOCK.acquire(blocking=False):
-        return {
-            'status': 'busy',
-            'msg': '终端绑定信息正在同步中，请稍后再试。',
-            'data': {'scanned_switches': 0, 'synced': 0, 'errors': []},
-        }
-
-    try:
-        started_at = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        update_mac_sync_state(
-            running=True,
-            status='running',
-            message='正在同步终端绑定信息',
-            started_at=started_at,
-            finished_at='',
-            actor=actor,
-            current_switch_index=0,
-            total_switches=0,
-            current_switch_ip='',
-            current_switch_name='',
-            synced=0,
-            found=0,
-            created=0,
-            updated=0,
-            unchanged=0,
-            errors=[],
-        )
-
-        all_errors = []
-        total_synced = 0
-        total_found = 0
-        total_created = 0
-        total_updated = 0
-        total_unchanged = 0
-
-        if switch_ip:
-            switch_ip = normalize_ip(switch_ip, '交换机 IP')
-            sw = db.get_switch_by_ip(switch_ip)
-            if not sw:
-                raise ValueError(f"资产管理库未登记该 IP（{switch_ip}）")
-            update_mac_sync_state(
-                current_switch_index=1,
-                total_switches=1,
-                current_switch_ip=sw['ip'],
-                current_switch_name=sw.get('name', ''),
-                message=f"正在扫描 {sw.get('name') or sw['ip']} ({sw['ip']})",
-            )
-            result = sync_switch_bindings_with_timeout(sw)
-            log_mac_sync_switch_result(actor, client_ip, sw, result=result)
-            total_synced += result['synced']
-            total_found += result.get('found', 0)
-            total_created += result.get('created', 0)
-            total_updated += result.get('updated', 0)
-            total_unchanged += result.get('unchanged', 0)
-            all_errors.extend([f"{sw['ip']} {err}" for err in result['errors'][:5]])
-            scanned_switches = 1
-            device_scope = switch_ip
-            update_mac_sync_state(
-                synced=total_synced,
-                found=total_found,
-                created=total_created,
-                updated=total_updated,
-                unchanged=total_unchanged,
-                errors=all_errors,
-            )
-        else:
-            device_scope = 'ALL_SWITCHES'
-            switches = db.get_terminal_sync_switches()
-            scanned_switches = 0
-            max_workers = get_mac_sync_max_workers()
-            update_mac_sync_state(
-                total_switches=len(switches),
-                message=f"正在并发扫描终端绑定信息，最大并发 {max_workers} 台",
-            )
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_map = {
-                    executor.submit(read_switch_bindings_with_timeout, sw): sw
-                    for sw in switches
-                }
-                for future in as_completed(future_map):
-                    sw = future_map[future]
-                    scanned_switches += 1
-                    update_mac_sync_state(
-                        current_switch_index=scanned_switches,
-                        total_switches=len(switches),
-                        current_switch_ip=sw.get('ip', ''),
-                        current_switch_name=sw.get('name', ''),
-                        synced=total_synced,
-                        found=total_found,
-                        created=total_created,
-                        updated=total_updated,
-                        unchanged=total_unchanged,
-                        errors=all_errors,
-                        message=f"已完成 {scanned_switches}/{len(switches)} 台，正在汇总 {sw.get('name') or sw.get('ip')} ({sw.get('ip')})",
-                    )
-                    try:
-                        read_result = future.result()
-                        if read_result.get('errors'):
-                            result = {
-                                'synced': 0,
-                                'found': 0,
-                                'created': 0,
-                                'updated': 0,
-                                'unchanged': 0,
-                                'matched': None,
-                                'errors': read_result['errors'],
-                            }
-                        else:
-                            result = persist_switch_bindings(sw, read_result.get('bindings') or [])
-                        log_mac_sync_switch_result(actor, client_ip, sw, result=result)
-                        total_synced += result['synced']
-                        total_found += result.get('found', 0)
-                        total_created += result.get('created', 0)
-                        total_updated += result.get('updated', 0)
-                        total_unchanged += result.get('unchanged', 0)
-                        all_errors.extend([f"{sw['ip']} {err}" for err in result['errors'][:5]])
-                    except Exception as exc:
-                        log_mac_sync_switch_result(actor, client_ip, sw, error=str(exc))
-                        all_errors.append(f"{sw.get('ip', 'Unknown')}: {exc}")
-                    update_mac_sync_state(
-                        synced=total_synced,
-                        found=total_found,
-                        created=total_created,
-                        updated=total_updated,
-                        unchanged=total_unchanged,
-                        errors=all_errors,
-                    )
-
-        status = "成功" if not all_errors else "部分失败"
-        db.log_operation(
-            actor,
-            client_ip,
-            device_scope,
-            "终端更新（汇总）",
-            (
-                f"扫描交换机:{scanned_switches} | 发现绑定:{total_found} | "
-                f"新增:{total_created} | 更新:{total_updated} | 未变:{total_unchanged} | 错误:{len(all_errors)}"
-            ),
-            status,
-        )
-        finished_at = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        update_mac_sync_state(
-            running=False,
-            status='success' if not all_errors else 'partial',
-            message=(
-                f"同步完成：扫描 {scanned_switches} 台交换机，发现 {total_found} 条绑定，"
-                f"新增 {total_created} 条，更新 {total_updated} 条，未变 {total_unchanged} 条。"
-            ),
-            finished_at=finished_at,
-            current_switch_index=scanned_switches,
-            synced=total_synced,
-            found=total_found,
-            created=total_created,
-            updated=total_updated,
-            unchanged=total_unchanged,
-            errors=all_errors,
-        )
-        return {
-            'status': 'success',
-            'msg': (
-                f"同步完成：扫描 {scanned_switches} 台交换机，发现 {total_found} 条绑定，"
-                f"新增 {total_created} 条，更新 {total_updated} 条，未变 {total_unchanged} 条。"
-            ),
-            'data': {
-                'scanned_switches': scanned_switches,
-                'synced': total_synced,
-                'found': total_found,
-                'created': total_created,
-                'updated': total_updated,
-                'unchanged': total_unchanged,
-                'errors': all_errors[:20],
-            },
-        }
-    except Exception as exc:
-        finished_at = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        update_mac_sync_state(
-            running=False,
-            status='error',
-            message=f"同步失败：{exc}",
-            finished_at=finished_at,
-        )
-        raise
-    finally:
-        MAC_SYNC_LOCK.release()
+    return service_run_mac_bindings_sync(
+        actor,
+        client_ip,
+        switch_ip,
+        MAC_SYNC_LOCK,
+        MAC_SYNC_STATE_STORE,
+        db,
+        normalize_ip,
+        sync_switch_bindings_with_timeout,
+        read_switch_bindings_with_timeout,
+        persist_switch_bindings,
+        log_mac_sync_switch_result,
+        get_mac_sync_max_workers,
+    )
 
 
 def internal_error(message, exc):
-    traceback.print_exc()
-    return jsonify({'status': 'error', 'msg': message})
+    error_id = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')
+    try:
+        app.logger.error('internal_error[%s] %s: %s', error_id, message, exc, exc_info=True)
+    except Exception:
+        traceback.print_exc()
+    payload = {'status': 'error', 'msg': message, 'error_id': error_id}
+    if app.debug:
+        payload['debug'] = str(exc)
+    return jsonify(payload), 500
 
-# === 椤甸潰璺敱 ===
+app.register_blueprint(create_audit_task_blueprint(db, permission_required, internal_error, csv_text))
+app.register_blueprint(create_alarm_manage_blueprint(
+    db,
+    get_json_data,
+    normalize_ip,
+    lambda switch_ip: service_collect_switch_alarm_report(db, get_manager, get_switch_runtime_data, switch_ip),
+    json_error,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_alarm_read_blueprint(
+    db,
+    build_alarm_command_suggestions,
+    internal_error,
+))
+app.register_blueprint(create_backup_read_blueprint(
+    list_backup_config_files,
+    read_backup_text,
+    get_json_data,
+    require_fields,
+    normalize_ip,
+    json_error,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_backup_manage_blueprint(
+    db,
+    H3CManager,
+    HuaweiManager,
+    BACKUP_ROOT,
+    lambda: service_create_data_package(db, APP_VERSION),
+    lambda upload: service_restore_data_package(db, RESTORE_BACKUP_DIR, upload),
+    service_preview_data_package,
+    lambda reason='manual': service_backup_current_db_key(db, RESTORE_BACKUP_DIR, reason),
+    lambda upload, key_storage=None, apply=False: service_import_legacy_switch_assets(db, RESTORE_BACKUP_DIR, upload, key_storage, apply),
+    lambda limit=2000, apply=False: service_import_bindings_from_backup_files(
+        list_backup_config_files,
+        read_backup_text,
+        save_binding_state,
+        limit,
+        apply,
+    ),
+    get_json_data,
+    json_error,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_info_read_blueprint(
+    db,
+    APP_VERSION_INFO,
+    count_backup_days,
+    list_backup_config_files,
+    internal_error,
+    admin_required,
+))
+app.register_blueprint(create_auth_pages_blueprint(db, User))
 
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        user_data = db.verify_user(username, password)
-        if user_data:
-            user = User(id=user_data['id'], username=user_data['username'])
-            login_user(user)
-            return redirect(url_for('index'))
-        else:
-            return render_template('login.html', error="用户名或密码错误")
-    return render_template('login.html')
-
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('login'))
+# 页面路由
 
 @app.route('/')
 @login_required 
 def index():
-    return render_template('index.html', username=current_user.username)
-
-# === 璧勪骇绠＄悊 API ===
-
-@app.route('/api/switches', methods=['GET'])
-@login_required
-def list_switches():
-    switches = db.get_all_switches()
-    return jsonify({'status': 'success', 'data': switches})
-
-# === 馃摗 璧勪骇绠＄悊锛氬崟鍙版坊鍔犺澶?(甯﹂噸澶岻P鏍￠獙) ===
-@app.route('/api/switches/add', methods=['POST'])
-@login_required
-def api_add_switch():
-    try:
-        data = get_json_data()
-        require_fields(data, ['name', 'ip', 'port', 'user'])
-        data['ip'] = normalize_ip(data['ip'])
-        data['port'] = normalize_port(data['port'])
-        vendor = normalize_vendor(data.get('vendor'))
-        role = normalize_switch_role(data.get('role'))
-        if db.get_switch_by_ip(data['ip']):
-            return jsonify({'status': 'error', 'msg': f"添加失败：IP 地址 {data['ip']} 已存在，请勿重复录入！"})
-
-        db.add_switch(data['name'], data['ip'], data['port'], data['user'], data['pass'], vendor, role)
-        return jsonify({'status': 'success'})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('添加设备失败，请检查输入或稍后重试', e)
-
-# === 馃搨 璧勪骇绠＄悊锛欵xcel 鎵归噺瀵煎叆璁惧鎺ュ彛 (甯﹂噸澶岻P璺宠繃鏈哄埗) ===
-@app.route('/api/switches/batch_import', methods=['POST'])
-@login_required
-def batch_import_switches():
-    if 'file' not in request.files:
-        return jsonify({'status': 'error', 'msg': '未找到上传文件'})
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'status': 'error', 'msg': '文件名不能为空'})
-    
-    try:
-        import openpyxl
-        wb = openpyxl.load_workbook(file, data_only=True)
-        sheet = wb.active
-        headers = [str(cell.value).strip() if cell.value is not None else "" for cell in sheet[1]]
-        
-        required_cols = ['设备名称', 'IP地址', '端口', '用户名', '密码', '厂商']
-        col_indices = {}
-        for req in required_cols:
-            if req in headers:
-                col_indices[req] = headers.index(req)
-            else:
-                return jsonify({'status': 'error', 'msg': f"资产表格缺少必填列头：{req}"})
-
-        existing_switches = db.get_all_switches()
-        existing_ips = {s['ip'] for s in existing_switches}
-
-        success_count = 0
-        skip_count = 0
-
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            ip = row[col_indices['IP地址']]
-            if not ip:
-                continue
-            ip = normalize_ip(ip)
-            
-            if ip in existing_ips:
-                skip_count += 1
-                continue
-
-            name = str(row[col_indices['设备名称']] or f"Switch_{ip}").strip()
-            port = normalize_port(row[col_indices['端口']] or 22)
-            user = str(row[col_indices['用户名']] or '').strip()
-            pwd = str(row[col_indices['密码']] or '').strip()
-            vendor = normalize_vendor(row[col_indices['厂商']] or 'h3c')
-
-            db.add_switch(name, ip, port, user, pwd, vendor)
-            
-            existing_ips.add(ip) 
-            success_count += 1
-            
-        msg = f"成功导入 {success_count} 台设备！"
-        if skip_count > 0:
-            msg += f"（自动跳过 {skip_count} 条重复 IP）"
-            
-        return jsonify({'status': 'success', 'msg': msg})
-    except Exception as e:
-        return internal_error('批量导入失败，请检查 Excel 内容后重试', e)
-
-@app.route('/api/switches/delete', methods=['POST'])
-@login_required
-def del_switch_api():
-    try:
-        data = get_json_data()
-        require_fields(data, ['id'])
-        db.delete_switch(int(data['id']))
-        return jsonify({'status': 'success'})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('删除设备失败，请稍后重试', e)
-
-
-@app.route('/api/switches/update', methods=['POST'])
-@login_required
-def update_switch_api():
-    try:
-        data = get_json_data()
-        require_fields(data, ['id', 'name', 'ip', 'port', 'user'])
-        switch_id = int(data['id'])
-        name = str(data['name']).strip()
-        if not name:
-            return json_error('设备名称不能为空')
-        ip = normalize_ip(data['ip'])
-        port = normalize_port(data['port'])
-        username = str(data.get('user') or '').strip()
-        password = str(data.get('pass') or '').strip()
-        vendor = normalize_vendor(data.get('vendor'))
-        role = normalize_switch_role(data.get('role'))
-
-        before = db.get_switch_by_id(switch_id)
-        if not before:
-            return json_error('设备不存在或已被删除')
-
-        same_ip_switch = db.get_switch_by_ip(ip)
-        if same_ip_switch and int(same_ip_switch['id']) != switch_id:
-            return json_error(f"修改失败：IP 地址 {ip} 已被其他设备使用")
-
-        updated = db.update_switch(switch_id, name, ip, port, username, password, vendor, role)
-        if not updated:
-            return json_error('设备不存在或已被删除')
-
-        db.log_operation(
-            current_user.username,
-            request.remote_addr,
-            ip,
-            "修改设备资产",
-            f"id={switch_id}, {before['ip']} -> {ip}, name={before['name']} -> {name}, vendor={vendor}, role={role}",
-            "成功",
-        )
-        return jsonify({'status': 'success'})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('修改设备失败，请检查输入或稍后重试', e)
-
-
-@app.route('/api/switches/update_metadata', methods=['POST'])
-@login_required
-def update_switch_metadata_api():
-    try:
-        data = get_json_data()
-        require_fields(data, ['id'])
-        switch_id = int(data['id'])
-        role = normalize_switch_role(data.get('role')) if 'role' in data else None
-        db.update_switch_metadata(switch_id, role)
-        db.log_operation(
-            current_user.username,
-            request.remote_addr,
-            str(switch_id),
-            "更新设备资产属性",
-            f"role={role if role is not None else '-'}",
-            "成功",
-        )
-        return jsonify({'status': 'success'})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('更新设备资产属性失败，请稍后重试', e)
-
-@app.route('/api/change_password', methods=['POST'])
-@login_required
-def change_pass_api():
-    try:
-        data = get_json_data()
-        new_pass = data.get('new_password')
-        if not new_pass:
-            return json_error('密码不能为空')
-        db.change_password(current_user.username, new_pass)
-        return jsonify({'status': 'success'})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('修改密码失败，请稍后重试', e)
-
-# ===寮€鏀炬暟鎹帴鍙ｆ彁渚涚粰鍓嶇缃戦〉璋冪敤===
-@app.route('/api/audit_logs', methods=['GET'])
-@login_required
-def api_audit_logs():
-    try:
-        # 榛樿鎷夊彇鏈€鏂扮殑 100 鏉¤褰?
-        logs = db.get_audit_logs(limit=100)
-        return jsonify({'status': 'success', 'data': logs})
-    except Exception as e:
-        return internal_error('获取审计日志失败，请稍后重试', e)
-# 寮€鏀綼pi鎺ュ彛缁欐暟鎹簱鍋氬墠闈㈡澘鏁版嵁
-@app.route('/api/dashboard_stats', methods=['GET'])
-@login_required
-def api_dashboard_stats():
-    try:
-        stats = db.get_dashboard_stats()
-        return jsonify({'status': 'success', 'data': stats})
-    except Exception as e:
-        return internal_error('获取统计数据失败，请稍后重试', e)
-
-
-@app.route('/api/backup_files', methods=['GET'])
-@login_required
-def api_backup_files():
-    try:
-        limit = int(request.args.get('limit', 500))
-        limit = max(1, min(limit, 2000))
-        return jsonify({'status': 'success', 'data': list_backup_config_files(limit=limit)})
-    except Exception as e:
-        return internal_error('获取备份文件列表失败，请稍后重试', e)
-
-
-@app.route('/api/backup_diff', methods=['POST'])
-@login_required
-def api_backup_diff():
-    try:
-        data = get_json_data()
-        require_fields(data, ['old_path', 'new_path'])
-        old_path = str(data['old_path']).strip()
-        new_path = str(data['new_path']).strip()
-        old_lines = read_backup_text(old_path)
-        new_lines = read_backup_text(new_path)
-        diff_lines = list(
-            difflib.unified_diff(
-                old_lines,
-                new_lines,
-                fromfile=old_path,
-                tofile=new_path,
-                lineterm='',
-                n=3,
-            )
-        )
-        additions = sum(1 for line in diff_lines if line.startswith('+') and not line.startswith('+++'))
-        deletions = sum(1 for line in diff_lines if line.startswith('-') and not line.startswith('---'))
-        return jsonify(
-            {
-                'status': 'success',
-                'data': {
-                    'old_path': old_path,
-                    'new_path': new_path,
-                    'additions': additions,
-                    'deletions': deletions,
-                    'changed': bool(additions or deletions),
-                    'diff': '\n'.join(diff_lines),
-                },
-            }
-        )
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('配置差异比对失败，请检查备份文件', e)
-
-
-@app.route('/api/task_center', methods=['GET'])
-@login_required
-def api_task_center():
-    try:
-        limit = int(request.args.get('limit', 300))
-        limit = max(1, min(limit, 1000))
-        logs = db.get_task_logs(limit=limit)
-        task_name_map = {
-            '同步终端绑定状态库': '终端更新（汇总）',
-            '同步终端绑定信息': '终端更新（汇总）',
-            '同步终端绑定状态库-单台': '终端更新（单台设备）',
-            '同步终端绑定信息-单台': '终端更新（单台设备）',
-        }
-        summary = {}
-        for row in logs:
-            action = task_name_map.get(row.get('action'), row.get('action') or '未知')
-            row['display_action'] = action
-            status = row.get('status') or '未知'
-            item = summary.setdefault(action, {'total': 0, 'success': 0, 'failed': 0, 'partial': 0})
-            item['total'] += 1
-            if status == '成功':
-                item['success'] += 1
-            elif '失败' in status:
-                item['failed'] += 1
-            else:
-                item['partial'] += 1
-        return jsonify({'status': 'success', 'data': {'logs': logs, 'summary': summary}})
-    except Exception as e:
-        return internal_error('获取任务中心数据失败，请稍后重试', e)
-
-
-@app.route('/api/port_profiles', methods=['GET'])
-@login_required
-def api_port_profiles():
-    try:
-        rows = db.get_port_profiles()
-        return jsonify({'status': 'success', 'data': rows})
-    except Exception as e:
-        return internal_error('获取端口画像失败，请稍后重试', e)
-
-
-@app.route('/api/health_check', methods=['GET'])
-@login_required
-def api_health_check():
-    try:
-        switches = db.get_all_switches()
-        bindings = db.get_mac_bindings(limit=100000)
-        backup_files = list_backup_config_files(limit=2000)
-        settings = db.get_system_settings()
-        backup_dates = sorted({item['date'] for item in backup_files if item.get('date')}, reverse=True)
-        access_ips = {sw['ip'] for sw in switches if (sw.get('role') or 'access') == 'access'}
-        binding_switch_ips = {row['switch_ip'] for row in bindings}
-        access_without_bindings = [
-            sw for sw in switches
-            if (sw.get('role') or 'access') == 'access' and sw['ip'] not in binding_switch_ips
-        ]
-        now = datetime.datetime.now()
-        stale_bindings = []
-        for row in bindings:
-            try:
-                updated = datetime.datetime.strptime(row.get('update_time', ''), '%Y-%m-%d %H:%M:%S')
-                if (now - updated).days >= 3:
-                    stale_bindings.append(row)
-            except Exception:
-                pass
-        checks = [
-            {'name': '设备资产', 'status': 'success' if switches else 'warning', 'detail': f"已登记 {len(switches)} 台设备"},
-            {'name': '终端绑定', 'status': 'success' if bindings else 'warning', 'detail': f"已绑定终端 {len(bindings)} 条"},
-            {'name': '备份文件', 'status': 'success' if backup_files else 'warning', 'detail': f"备份文件 {len(backup_files)} 个，最近日期 {backup_dates[0] if backup_dates else '-'}"},
-            {'name': '接入设备覆盖', 'status': 'success' if not access_without_bindings else 'warning', 'detail': f"{len(access_without_bindings)} 台接入交换机暂无终端绑定记录"},
-            {'name': '绑定新鲜度', 'status': 'success' if not stale_bindings else 'warning', 'detail': f"{len(stale_bindings)} 条绑定超过 3 天未确认"},
-            {'name': '终端更新参数', 'status': 'success', 'detail': f"并发 {settings['mac_sync_max_workers']}，单台超时 {settings['mac_sync_timeout']} 秒"},
-        ]
-        return jsonify(
-            {
-                'status': 'success',
-                'data': {
-                    'checks': checks,
-                    'access_without_bindings': access_without_bindings[:50],
-                    'stale_bindings': stale_bindings[:50],
-                    'settings': settings,
-                },
-            }
-        )
-    except Exception as e:
-        return internal_error('运行健康检查失败，请稍后重试', e)
-
-
-@app.route('/api/data_export', methods=['GET'])
-@login_required
-def api_data_export():
-    try:
-        memory_file, filename = create_data_package()
-        return send_file(memory_file, as_attachment=True, download_name=filename, mimetype='application/zip')
-    except Exception as e:
-        return internal_error('导出数据包失败，请稍后重试', e)
-
-
-@app.route('/api/data_import', methods=['POST'])
-@login_required
-def api_data_import():
-    try:
-        upload = request.files.get('file')
-        if not upload or not upload.filename:
-            return json_error('请选择要导入的数据包')
-        backup_dir = restore_data_package(upload)
-        return jsonify(
-            {
-                'status': 'success',
-                'msg': '数据包已导入。当前服务仍可能保留旧状态，建议立即重启 run_server.py 后再继续操作。',
-                'data': {'backup_dir': backup_dir},
-            }
-        )
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('导入数据包失败，请检查 zip 文件', e)
-
-
-@app.route('/api/data_import_preview', methods=['POST'])
-@login_required
-def api_data_import_preview():
-    try:
-        upload = request.files.get('file')
-        if not upload or not upload.filename:
-            return json_error('请选择要预览的数据包')
-        return jsonify({'status': 'success', 'data': preview_data_package(upload)})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('预览数据包失败，请检查 zip 文件', e)
-
-
-@app.route('/api/offline_binding_import', methods=['POST'])
-@login_required
-def api_offline_binding_import():
-    try:
-        data = get_json_data()
-        apply_import = bool(data.get('apply'))
-        result = import_bindings_from_backup_files(limit=int(data.get('limit') or 2000), apply=apply_import)
-        db.log_operation(
-            current_user.username,
-            request.remote_addr,
-            "BACKUPS",
-            "离线导入绑定库",
-            f"apply={apply_import} | files={result['files']} | found={result['found']} | unique={result['unique_terminals']} | duplicates={result['duplicates']} | created={result['created']} | updated={result['updated']} | unchanged={result['unchanged']} | errors={len(result['errors'])}",
-            "成功" if not result['errors'] else "部分失败",
-        )
-        return jsonify({'status': 'success', 'data': result})
-    except Exception as e:
-        return internal_error('离线导入绑定库失败，请检查备份配置', e)
-
-
-@app.route('/api/deep_health_check', methods=['POST'])
-@login_required
-def api_deep_health_check():
-    try:
-        data = get_json_data()
-        limit = max(1, min(int(data.get('limit') or 10), 50))
-        switches = db.get_all_switches()[:limit]
-        results = []
-        for sw in switches:
-            item = {'ip': sw['ip'], 'name': sw.get('name', ''), 'vendor': sw.get('vendor', 'h3c'), 'status': 'unknown', 'detail': ''}
-            try:
-                mgr = get_manager({'ip': sw['ip'], 'user': sw['username'], 'pass': sw['password'], 'port': sw['port'], 'vendor': sw.get('vendor', 'h3c')})
-                info = mgr.get_device_info()
-                item['status'] = 'success'
-                item['detail'] = info
-            except Exception as exc:
-                msg = str(exc)
-                item['status'] = 'failed'
-                if 'Authentication' in msg:
-                    item['detail'] = '认证失败'
-                elif 'timed out' in msg.lower() or 'timeout' in msg.lower():
-                    item['detail'] = '连接超时'
-                else:
-                    item['detail'] = msg[:300]
-            results.append(item)
-        return jsonify({'status': 'success', 'data': {'checked': len(results), 'results': results}})
-    except Exception as e:
-        return internal_error('深度在线健康检查失败', e)
-
-
-@app.route('/api/switch_alarm_logs', methods=['POST'])
-@login_required
-def api_switch_alarm_logs():
-    try:
-        data = get_json_data()
-        switch_ip = normalize_ip(data.get('switch_ip') or data.get('ip'), '交换机 IP')
-        result = collect_switch_alarm_report(switch_ip)
-        raw = result['raw']
-        analysis = result['analysis']
-        db.log_operation(current_user.username, request.remote_addr, switch_ip, "采集交换机日志告警", f"critical={analysis['critical']} warning={analysis['warning']}", "成功")
-        return jsonify({'status': 'success', 'data': {'raw': raw[-20000:], 'analysis': analysis}})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('采集交换机日志失败，请检查设备状态', e)
-
-
-@app.route('/api/switch_alarm_reports', methods=['GET'])
-@login_required
-def api_switch_alarm_reports():
-    try:
-        limit = int(request.args.get('limit') or 200)
-        limit = max(1, min(limit, 1000))
-        return jsonify({'status': 'success', 'data': db.get_switch_alarm_reports(limit)})
-    except Exception as e:
-        return internal_error('读取交换机日志分析报告失败', e)
-
-
-@app.route('/api/alarm_dashboard', methods=['GET'])
-@login_required
-def api_alarm_dashboard():
-    try:
-        reports = db.get_latest_switch_alarm_reports()
-        states = db.get_alarm_states()
-        trends = db.get_alarm_trends(7)
-        risk_rank = {'high': 4, 'medium': 3, 'low': 2, 'normal': 1}
-        summary = {'total': len(reports), 'high': 0, 'medium': 0, 'low': 0, 'normal': 0, 'failed': 0, 'ack': 0, 'ignored': 0}
-        devices = []
-        for item in reports:
-            state = states.get(item.get('switch_ip')) or {}
-            item['alarm_state'] = state.get('state') or 'open'
-            item['alarm_note'] = state.get('note') or ''
-            item['ignore_until'] = state.get('ignore_until') or ''
-            item['state_updated_by'] = state.get('updated_by') or ''
-            item['state_update_time'] = state.get('update_time') or ''
-            if item['alarm_state'] == 'ack':
-                summary['ack'] += 1
-            elif item['alarm_state'] == 'ignored':
-                summary['ignored'] += 1
-            if item.get('status') != '成功':
-                risk_level = 'failed'
-                priority = 500
-                summary['failed'] += 1
-            else:
-                risk_level = item.get('risk_level') or 'normal'
-                summary[risk_level] = summary.get(risk_level, 0) + 1
-                priority = (
-                    risk_rank.get(risk_level, 0) * 1000
-                    + int(item.get('risk_score') or 0) * 5
-                    + int(item.get('critical_count') or 0) * 30
-                    + int(item.get('warning_count') or 0)
-                )
-            item['dashboard_risk'] = risk_level
-            if item['alarm_state'] == 'ack':
-                priority -= 300
-            elif item['alarm_state'] == 'ignored':
-                priority -= 600
-            item['priority_score'] = priority
-            item['commands'] = build_alarm_command_suggestions(item.get('category_counts') or {})
-            devices.append(item)
-        devices.sort(key=lambda row: (row.get('priority_score') or 0, row.get('timestamp') or ''), reverse=True)
-        top_devices = [row for row in devices if row.get('alarm_state') == 'open'][:10]
-        return jsonify(
-            {
-                'status': 'success',
-                'data': {
-                    'summary': summary,
-                    'trends': trends,
-                    'devices': devices,
-                    'top_devices': top_devices,
-                    'sort_rule': '采集失败/高风险优先，其次风险分、严重数、告警数、最新时间。Top 10 只是默认优先处理列表，完整设备仍在下方可筛选查看。',
-                },
-            }
-        )
-    except Exception as e:
-        return internal_error('读取告警中心数据失败', e)
-
-
-@app.route('/api/alarm_state/update', methods=['POST'])
-@login_required
-def api_alarm_state_update():
-    try:
-        data = get_json_data()
-        switch_ip = normalize_ip(data.get('switch_ip'), '交换机 IP')
-        state = str(data.get('state') or 'open').strip()
-        if state not in {'open', 'ack', 'ignored'}:
-            raise ValueError('告警状态必须是 open、ack 或 ignored')
-        note = str(data.get('note') or '').strip()
-        ignore_until = str(data.get('ignore_until') or '').strip()
-        db.update_alarm_state(switch_ip, state, note, ignore_until, current_user.username)
-        db.log_operation(current_user.username, request.remote_addr, switch_ip, "更新告警状态", f"state={state} note={note[:100]}", "成功")
-        return jsonify({'status': 'success'})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('更新告警状态失败', e)
-
-
-@app.route('/api/version', methods=['GET'])
-@login_required
-def api_version():
-    data = dict(APP_VERSION_INFO)
-    data['settings'] = db.get_system_settings()
-    return jsonify({'status': 'success', 'data': data})
-
-
-@app.route('/api/settings', methods=['GET'])
-@login_required
-def api_settings():
-    return jsonify({'status': 'success', 'data': db.get_system_settings()})
-
-
-@app.route('/api/settings/update', methods=['POST'])
-@login_required
-def update_settings_api():
-    try:
-        data = get_json_data()
-        if 'auto_save_after_backup' in data:
-            enabled = bool(data.get('auto_save_after_backup'))
-            db.set_setting('auto_save_after_backup', '1' if enabled else '0')
-            db.log_operation(
-                current_user.username,
-                request.remote_addr,
-                "SYSTEM",
-                "更新系统设置",
-                f"auto_save_after_backup={1 if enabled else 0}",
-                "成功",
-            )
-        if 'mac_sync_timeout' in data:
-            timeout = int(data.get('mac_sync_timeout'))
-            if timeout < 10 or timeout > 600:
-                raise ValueError('单台终端更新时间必须在 10-600 秒之间')
-            db.set_setting('mac_sync_timeout', str(timeout))
-        if 'mac_sync_max_workers' in data:
-            max_workers = int(data.get('mac_sync_max_workers'))
-            if max_workers < 1 or max_workers > 16:
-                raise ValueError('终端更新并发数必须在 1-16 之间')
-            db.set_setting('mac_sync_max_workers', str(max_workers))
-        if 'protected_keywords' in data:
-            keywords = str(data.get('protected_keywords') or '').strip()
-            if not keywords:
-                raise ValueError('保护关键词不能为空')
-            db.set_setting('protected_keywords', keywords)
-        for key in ['auto_backup_hour', 'auto_sync_hour', 'auto_data_export_hour', 'auto_alarm_collect_hour']:
-            if key in data:
-                value = int(data.get(key))
-                if value < 0 or value > 23:
-                    raise ValueError(f'{key} 必须在 0-23 之间')
-                db.set_setting(key, str(value))
-        for key in ['auto_backup_minute', 'auto_sync_minute', 'auto_data_export_minute', 'auto_alarm_collect_minute']:
-            if key in data:
-                value = int(data.get(key))
-                if value < 0 or value > 59:
-                    raise ValueError(f'{key} 必须在 0-59 之间')
-                db.set_setting(key, str(value))
-        if 'auto_data_export_enabled' in data:
-            db.set_setting('auto_data_export_enabled', '1' if bool(data.get('auto_data_export_enabled')) else '0')
-        if 'auto_alarm_collect_enabled' in data:
-            db.set_setting('auto_alarm_collect_enabled', '1' if bool(data.get('auto_alarm_collect_enabled')) else '0')
-        if 'auto_data_export_dir' in data:
-            export_dir = str(data.get('auto_data_export_dir') or 'data_packages').strip()
-            if not export_dir:
-                raise ValueError('自动数据包导出目录不能为空')
-            db.set_setting('auto_data_export_dir', export_dir)
-        if any(key.startswith('auto_') for key in data.keys()):
-            configure_scheduler()
-        return jsonify({'status': 'success', 'data': db.get_system_settings()})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('更新系统设置失败，请稍后重试', e)
-
-
-# === 涓氬姟璺敱 ===
-
-@app.route('/test_connection', methods=['POST'])
-@login_required
-def test_connection():
-    try:
-        data = get_json_data()
-        require_fields(data, ['ip', 'user', 'pass'])
-        data['ip'] = normalize_ip(data['ip'])
-        if 'port' in data:
-            data['port'] = normalize_port(data['port'])
-        if 'vendor' in data:
-            data['vendor'] = normalize_vendor(data['vendor'])
-        mgr = get_manager(data)
-        info = mgr.get_device_info()
-        return jsonify({'status': 'success', 'log': info.replace('\n', '<br>')})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('连接测试失败，请检查设备连通性和凭据', e)
-
-@app.route('/get_interfaces', methods=['POST'])
-@login_required
-def get_interfaces():
-    try:
-        data = get_json_data()
-        require_fields(data, ['ip', 'user', 'pass'])
-        data['ip'] = normalize_ip(data['ip'])
-        if 'port' in data:
-            data['port'] = normalize_port(data['port'])
-        if 'vendor' in data:
-            data['vendor'] = normalize_vendor(data['vendor'])
-        mgr = get_manager(data)
-        interfaces = mgr.get_interface_list()
-        return jsonify({'status': 'success', 'data': interfaces})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('获取端口列表失败，请检查设备连通性和凭据', e)
-
-@app.route('/get_port_info', methods=['POST'])
-@login_required
-def get_port_info():
-    try:
-        data = get_json_data()
-        require_fields(data, ['ip', 'user', 'pass', 'interface'])
-        data['ip'] = normalize_ip(data['ip'])
-        if 'port' in data:
-            data['port'] = normalize_port(data['port'])
-        if 'vendor' in data:
-            data['vendor'] = normalize_vendor(data['vendor'])
-        mgr = get_manager(data)
-        info, raw = mgr.get_port_info(data['interface'])
-        return jsonify({'status': 'success', 'data': info, 'log': f"读取成功。<br>RAW:<br>{raw.replace(chr(10), '<br>')}"})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('获取端口详情失败，请稍后重试', e)
-
-
-@app.route('/set_interface_description', methods=['POST'])
-@login_required
-def set_interface_description():
-    try:
-        data = get_json_data()
-        require_fields(data, ['ip', 'user', 'pass', 'interface'])
-        client_ip = request.remote_addr
-        data['ip'] = normalize_ip(data['ip'])
-        if 'port' in data:
-            data['port'] = normalize_port(data['port'])
-        if 'vendor' in data:
-            data['vendor'] = normalize_vendor(data['vendor'])
-        description = str(data.get('description', '')).strip()
-        if '\n' in description or '\r' in description:
-            raise ValueError('端口描述不能包含换行符')
-        if len(description) > 120:
-            raise ValueError('端口描述不能超过 120 个字符')
-
-        mgr = get_manager(data)
-        log = mgr.set_interface_description(data['interface'], description)
-        details = f"端口:{data['interface']} | 描述:{description or '(清空)'}"
-        db.log_operation(current_user.username, client_ip, data['ip'], "设置端口描述", details, "成功")
-        return jsonify({'status': 'success', 'log': format_switch_log(log).replace('\n', '<br>')})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        if 'data' in locals():
-            db.log_operation(
-                current_user.username,
-                locals().get('client_ip', request.remote_addr),
-                data.get('ip', 'Unknown'),
-                "设置端口描述",
-                f"端口:{data.get('interface', '')} | 报错:{str(e)}",
-                "失败",
-            )
-        return internal_error('设置端口描述失败，请检查设备状态和参数', e)
-
-# === 鍗囩骇鐗堬細缁戝畾鎺ュ彛 (甯﹀璁℃棩蹇? ===
-@app.route('/bind_port', methods=['POST'])
-@login_required
-def bind_port():
-    try:
-        d = get_json_data()
-        require_fields(d, ['ip', 'interface', 'bind_ip', 'mac', 'mode'])
-        client_ip = request.remote_addr
-        d['ip'] = normalize_ip(d['ip'])
-        d['bind_ip'] = normalize_ip(d['bind_ip'], '绑定 IP')
-        d['mac'] = normalize_mac(d['mac'])
-        mode = normalize_mode(d.get('mode', 'access'))
-        d['mode'] = mode
-        d['vlan'] = normalize_vlan(d.get('vlan'))
-        device_ip = d.get('ip', 'Unknown')
-        details = f"端口:{d.get('interface')} | IP:{d.get('bind_ip')} | MAC:{d.get('mac')} | 模式:{mode} | VLAN:{d.get('vlan')}"
-        mgr = get_manager(d)
-
-        assert_interface_not_protected(mgr, d['interface'])
-
-        log = mgr.configure_port_binding(d['interface'], d['vlan'], d['bind_ip'], d['mac'], mode)
-        save_binding_state(d['ip'], d['interface'], d['vlan'], d['bind_ip'], d['mac'], mode)
-        db.log_operation(current_user.username, client_ip, device_ip, "端口绑定", details, "成功")
-        return jsonify({'status': 'success', 'log': log.replace('\n', '<br>')})
-    except ValueError as e:
-        if 'details' in locals():
-            db.log_operation(current_user.username, client_ip, device_ip, "端口绑定", f"{details} | 报错: {str(e)}", "失败")
-        return json_error(str(e))
-    except Exception as e:
-        db.log_operation(current_user.username, client_ip, device_ip, "端口绑定", f"{details} | 报错: {str(e)}", "失败")
-        return internal_error('端口绑定失败，请检查设备状态和参数', e)
-
-# === 鍗囩骇鐗堬細瑙ｇ粦鎺ュ彛 (甯﹀璁℃棩蹇? ===
-@app.route('/del_port_binding', methods=['POST'])
-@login_required
-def del_port_binding():
-    try:
-        d = get_json_data()
-        require_fields(d, ['ip', 'interface', 'del_ip', 'del_mac', 'mode'])
-        client_ip = request.remote_addr
-        d['ip'] = normalize_ip(d['ip'])
-        d['del_ip'] = normalize_ip(d['del_ip'], '解绑 IP')
-        d['del_mac'] = normalize_mac(d['del_mac'], '解绑 MAC')
-        mode = normalize_mode(d.get('mode', 'access'))
-        d['mode'] = mode
-        vlan = normalize_vlan(d.get('vlan'), allow_empty=True)
-        d['vlan'] = vlan
-        device_ip = d.get('ip', 'Unknown')
-        details = f"端口:{d.get('interface')} | IP:{d.get('del_ip')} | MAC:{d.get('del_mac')} | 模式:{mode} | VLAN:{vlan}"
-        mgr = get_manager(d)
-
-        assert_interface_not_protected(mgr, d['interface'])
-
-        log = mgr.delete_port_binding(d['interface'], d['del_ip'], d['del_mac'], mode, vlan)
-        db.delete_mac_binding(d['del_mac'])
-        db.log_operation(current_user.username, client_ip, device_ip, "解除绑定", details, "成功")
-        return jsonify({'status': 'success', 'log': log.replace('\n', '<br>')})
-    except ValueError as e:
-        if 'details' in locals():
-            db.log_operation(current_user.username, client_ip, device_ip, "解除绑定", f"{details} | 报错: {str(e)}", "失败")
-        return json_error(str(e))
-    except Exception as e:
-        db.log_operation(current_user.username, client_ip, device_ip, "解除绑定", f"{details} | 报错: {str(e)}", "失败")
-        return internal_error('解除绑定失败，请检查设备状态和参数', e)
-
-
-@app.route('/api/terminal_binding_lookup', methods=['POST'])
-@login_required
-def terminal_binding_lookup():
-    try:
-        data = get_json_data()
-        require_fields(data, ['query'])
-        source_switch_ip = str(data.get('source_switch_ip', '')).strip()
-        try:
-            binding = get_terminal_binding_record(data['query'], source_switch_ip or None)
-            return jsonify({'status': 'success', 'data': binding, 'source': 'local'})
-        except ValueError:
-            if MAC_SYNC_LOCK.locked():
-                return jsonify(
-                    {
-                        'status': 'error',
-                        'msg': '终端绑定信息正在后台同步，请同步完成后再定位终端。',
-                        'sync': get_mac_sync_state_snapshot(),
-                    }
-                ), 409
-            if source_switch_ip:
-                sync_result = scan_one_switch_for_terminal(source_switch_ip, data['query'])
-            else:
-                query_type, query_value = normalize_terminal_lookup(data['query'])
-                sync_result = sync_all_switch_bindings(query_type, query_value)
-            if sync_result['matched']:
-                return jsonify(
-                    {
-                        'status': 'success',
-                        'data': sync_result['matched'],
-                        'source': 'live_scan',
-                        'sync': sync_result,
-                    }
-                )
-            return jsonify(
-                {
-                    'status': 'error',
-                    'msg': f"已绑定终端列表和主动扫描都未找到该终端。已扫描 {sync_result['scanned_switches']} 台交换机，同步 {sync_result['synced']} 条绑定。",
-                    'sync': sync_result,
-                }
-            )
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('查询终端位置失败，请稍后重试', e)
-
-
-@app.route('/api/sync_mac_bindings', methods=['POST'])
-@login_required
-def sync_mac_bindings():
-    try:
-        data = get_json_data()
-        switch_ip = str(data.get('switch_ip', '')).strip()
-        if MAC_SYNC_LOCK.locked():
-            return jsonify({'status': 'busy', 'msg': '终端绑定信息正在同步中，请稍后再试。', 'data': get_mac_sync_state_snapshot()}), 409
-
-        actor = current_user.username
-        client_ip = request.remote_addr
-        worker = threading.Thread(
-            target=run_mac_bindings_sync,
-            args=(actor, client_ip, switch_ip),
-            daemon=True,
-        )
-        worker.start()
-        return jsonify({'status': 'success', 'msg': '同步任务已在后台启动。', 'data': get_mac_sync_state_snapshot()})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('同步终端绑定信息失败，请检查设备连通性和资产凭据', e)
-
-
-@app.route('/api/mac_sync_status', methods=['GET'])
-@login_required
-def mac_sync_status():
-    return jsonify({'status': 'success', 'data': get_mac_sync_state_snapshot()})
-
-
-@app.route('/api/mac_bindings', methods=['GET'])
-@login_required
-def api_mac_bindings():
-    try:
-        limit = request.args.get('limit', '500')
-        limit = max(1, min(5000, int(limit)))
-        rows = db.get_mac_bindings(limit=limit)
-        return jsonify({'status': 'success', 'data': rows})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('读取已绑定终端列表失败，请稍后重试', e)
-
-
-@app.route('/api/migrate_terminal', methods=['POST'])
-@login_required
-def migrate_terminal():
-    try:
-        data = get_json_data()
-        require_fields(data, ['query', 'target_switch_ip', 'target_interface'])
-        client_ip = request.remote_addr
-        source_switch_ip_hint = str(data.get('source_switch_ip', '')).strip()
-        binding = get_terminal_binding_record(data['query'], source_switch_ip_hint or None)
-        target_switch_ip = normalize_ip(data['target_switch_ip'], '目标交换机 IP')
-        target_interface = str(data['target_interface']).strip()
-        if not target_interface:
-            raise ValueError('目标端口不能为空')
-
-        source_switch_ip = normalize_ip(binding['switch_ip'], '源交换机 IP')
-        source_interface = str(binding['port']).strip()
-        source_ip = normalize_ip(binding['ip_address'], '源绑定 IP')
-        source_mac = normalize_mac(binding['mac_address'], '源绑定 MAC')
-        assert_no_ip_conflict(source_ip, source_mac)
-        source_mode = normalize_mode(binding.get('mode', 'access'))
-        source_vlan = str(binding.get('vlan') or '').strip()
-        target_mode = normalize_mode(data.get('target_mode') or source_mode)
-        target_vlan = data.get('target_vlan')
-        if str(target_vlan or '').strip():
-            target_vlan = normalize_vlan(target_vlan)
-        elif target_mode == 'access':
-            target_vlan = normalize_vlan(source_vlan, allow_empty=False)
-        else:
-            target_vlan = normalize_vlan(source_vlan or data.get('target_vlan'), allow_empty=False)
-
-        if source_switch_ip == target_switch_ip and source_interface == target_interface:
-            raise ValueError('源端口与目标端口相同，无需执行迁移')
-
-        source_runtime = get_switch_runtime_data(source_switch_ip)
-        target_runtime = get_switch_runtime_data(target_switch_ip)
-
-        source_details = f"{source_switch_ip} {source_interface} VLAN:{source_vlan or '-'} 模式:{source_mode}"
-        target_details = f"{target_switch_ip} {target_interface} VLAN:{target_vlan or '-'} 模式:{target_mode}"
-
-        if bool(data.get('dry_run')):
-            plan_log = (
-                "[终端迁移试运行]\n"
-                "本次只生成计划，不登录交换机，不下发任何配置。\n\n"
-                f"终端: IP {source_ip} / MAC {source_mac}\n"
-                f"源位置: {source_details}\n"
-                f"目标位置: {target_details}\n\n"
-                "预计执行步骤:\n"
-                f"1. 登录源交换机 {source_switch_ip}，检查源端口 {source_interface} 是否受保护。\n"
-                f"2. 在源端口删除 {source_ip} / {source_mac} 绑定。\n"
-                "3. 只读复核旧端口是否仍存在相同 IP+MAC 绑定。\n"
-                f"4. 登录目标交换机 {target_switch_ip}，检查目标端口 {target_interface} 是否受保护。\n"
-                "5. 按目标端口现有配置差异化下发 VLAN、源绑定校验和 IP/MAC 绑定。\n"
-                "6. 成功后更新已绑定终端列表。\n"
-            )
-            db.log_operation(
-                current_user.username,
-                client_ip,
-                target_switch_ip,
-                "终端迁移试运行",
-                f"MAC:{source_mac} | IP:{source_ip} | 源:{source_details} -> 目标:{target_details}",
-                "成功",
-            )
-            return jsonify(
-                {
-                    'status': 'success',
-                    'msg': '终端迁移试运行完成，未下发配置',
-                    'data': {
-                        'source': binding,
-                        'target': {
-                            'switch_ip': target_switch_ip,
-                            'port': target_interface,
-                            'vlan': target_vlan,
-                            'mode': target_mode,
-                        },
-                        'dry_run': True,
-                    },
-                    'log': plan_log.replace('\n', '<br>'),
-                }
-            )
-
-        source_mgr = get_manager(source_runtime)
-        target_mgr = get_manager(target_runtime)
-        assert_interface_not_protected(source_mgr, source_interface)
-        target_port_info = assert_interface_not_protected(target_mgr, target_interface)
-
-        old_log = source_mgr.delete_port_binding(source_interface, source_ip, source_mac, source_mode, source_vlan)
-        source_mgr_verify = get_manager(source_runtime)
-        if port_has_binding(source_mgr_verify, source_interface, source_ip, source_mac):
-            raise ValueError(
-                f"旧端口解绑后复核失败：{source_switch_ip} {source_interface} 仍存在 "
-                f"{source_ip} / {source_mac}，已停止迁移。请检查交换机返回信息或手动清理。"
-            )
-        rollback_needed = True
-        try:
-            new_log = target_mgr.configure_port_binding(
-                target_interface,
-                target_vlan,
-                source_ip,
-                source_mac,
-                target_mode,
-                current_config=target_port_info.get('_raw_config'),
-            )
-        except Exception:
-            if rollback_needed:
-                try:
-                    source_mgr_rollback = get_manager(source_runtime)
-                    source_mgr_rollback.configure_port_binding(source_interface, source_vlan, source_ip, source_mac, source_mode)
-                except Exception:
-                    pass
-            raise
-
-        save_binding_state(target_switch_ip, target_interface, target_vlan, source_ip, source_mac, target_mode)
-        details = f"终端迁移 | MAC:{source_mac} | IP:{source_ip} | 源:{source_details} -> 目标:{target_details}"
-        db.log_operation(current_user.username, client_ip, target_switch_ip, "终端迁移", details, "成功")
-
-        combined_log = (
-            "[旧端口清理]\n"
-            f"{format_switch_log(old_log)}\n\n"
-            "[新端口部署]\n"
-            f"{format_switch_log(new_log)}"
-        )
-        return jsonify(
-            {
-                'status': 'success',
-                'msg': '终端迁移完成',
-                'data': {
-                    'source': binding,
-                    'target': {
-                        'switch_ip': target_switch_ip,
-                        'port': target_interface,
-                        'vlan': target_vlan,
-                        'mode': target_mode,
-                    },
-                },
-                'log': combined_log.replace('\n', '<br>'),
-            }
-        )
-    except ValueError as e:
-        if 'client_ip' in locals():
-            db.log_operation(
-                current_user.username,
-                client_ip,
-                data.get('target_switch_ip', 'Unknown') if 'data' in locals() else 'Unknown',
-                "终端迁移",
-                f"查询:{data.get('query', '') if 'data' in locals() else ''} | 报错: {str(e)}",
-                "失败",
-            )
-        return json_error(str(e))
-    except Exception as e:
-        if 'client_ip' in locals():
-            db.log_operation(
-                current_user.username,
-                client_ip,
-                data.get('target_switch_ip', 'Unknown') if 'data' in locals() else 'Unknown',
-                "终端迁移",
-                f"查询:{data.get('query', '') if 'data' in locals() else ''} | 报错: {str(e)}",
-                "失败",
-            )
-        return internal_error('终端迁移失败，请检查设备状态和参数', e)
-
-@app.route('/get_acl', methods=['POST'])
-@login_required
-def get_acl():
-    try:
-        data = get_json_data()
-        require_fields(data, ['ip', 'user', 'pass'])
-        data['ip'] = normalize_ip(data['ip'])
-        if 'port' in data:
-            data['port'] = normalize_port(data['port'])
-        if 'vendor' in data:
-            data['vendor'] = normalize_vendor(data['vendor'])
-        mgr = get_manager(data)
-        query_all = bool(data.get('all'))
-        if query_all:
-            groups = mgr.get_acl_groups()
-            return jsonify({'status': 'success', 'data': {'groups': groups}})
-        acl_number = normalize_acl_number(data.get('acl_number', 4000))
-        rules = mgr.get_acl_rules(acl_number)
-        return jsonify({'status': 'success', 'data': {'groups': [{'number': acl_number, 'type': 'ACL', 'rules': rules}]}})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('获取 ACL 失败，请稍后重试', e)
-
-@app.route('/add_acl', methods=['POST'])
-@login_required
-def add_acl():
-    try:
-        d = get_json_data()
-        require_fields(d, ['ip', 'user', 'pass', 'mac'])
-        d['ip'] = normalize_ip(d['ip'])
-        d['mac'] = normalize_mac(d['mac'])
-        if 'port' in d:
-            d['port'] = normalize_port(d['port'])
-        if 'vendor' in d:
-            d['vendor'] = normalize_vendor(d['vendor'])
-        mgr = get_manager(d)
-        acl_number = normalize_acl_number(d.get('acl_number', 4000))
-        rid = d.get('rule_id')
-        if rid == "":
-            rid = None
-        elif rid is not None:
-            rid = str(int(str(rid).strip()))
-        log = mgr.add_acl_mac(d['mac'], rid, acl_number)
-        return jsonify({'status': 'success', 'log': log.replace('\n', '<br>')})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('添加 ACL 失败，请检查参数后重试', e)
-
-@app.route('/del_acl', methods=['POST'])
-@login_required
-def del_acl():
-    try:
-        d = get_json_data()
-        require_fields(d, ['ip', 'user', 'pass', 'rule_id'])
-        d['ip'] = normalize_ip(d['ip'])
-        d['rule_id'] = str(int(str(d['rule_id']).strip()))
-        if 'port' in d:
-            d['port'] = normalize_port(d['port'])
-        if 'vendor' in d:
-            d['vendor'] = normalize_vendor(d['vendor'])
-        mgr = get_manager(d)
-        acl_number = normalize_acl_number(d.get('acl_number', 4000))
-        log = mgr.delete_acl_rule(d['rule_id'], acl_number)
-        return jsonify({'status': 'success', 'log': log.replace('\n', '<br>')})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        return internal_error('删除 ACL 失败，请检查参数后重试', e)
-
-@app.route('/save_config', methods=['POST'])
-@login_required
-def save_config():
-    try:
-        data = get_json_data()
-        require_fields(data, ['ip', 'user', 'pass'])
-        client_ip = request.remote_addr
-        data['ip'] = normalize_ip(data['ip'])
-        if 'port' in data:
-            data['port'] = normalize_port(data['port'])
-        if 'vendor' in data:
-            data['vendor'] = normalize_vendor(data['vendor'])
-        device_ip = data.get('ip', 'Unknown')
-        mgr = get_manager(data)
-        log = mgr.save_config_to_device()
-        
-        db.log_operation(current_user.username, client_ip, device_ip, "保存配置", "执行 save force", "成功")
-        return jsonify({'status': 'success', 'log': log.replace('\n', '<br>')})
-    except ValueError as e:
-        return json_error(str(e))
-    except Exception as e:
-        db.log_operation(current_user.username, client_ip, device_ip, "保存配置", f"报错: {str(e)}", "失败")
-        return internal_error('保存配置失败，请检查设备状态后重试', e)
-
-
-# === 馃搳 Excel 鎵归噺瀵煎叆瑙ｆ瀽鎺ュ彛 ===
-@app.route('/api/parse_excel', methods=['POST'])
-@login_required
-def parse_excel():
-    if 'file' not in request.files:
-        return jsonify({'status': 'error', 'msg': '未找到上传的文件'})
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'status': 'error', 'msg': '文件名不能为空'})
-
-    try:
-        wb = openpyxl.load_workbook(file, data_only=True)
-        sheet = wb.active
-        
-        headers = [str(cell.value).strip() if cell.value else "" for cell in sheet[1]]
-        required_cols = ['交换机IP', '端口', 'VLAN', '绑定IP', '绑定MAC', '模式']
-        
-        col_indices = {}
-        for req in required_cols:
-            if req in headers:
-                col_indices[req] = headers.index(req)
-            else:
-                return jsonify({'status': 'error', 'msg': f"Excel 缺少必填列头：{req}"})
-
-        data = []
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            switch_ip = row[col_indices['交换机IP']]
-            if not switch_ip:
-                continue
-            switch_ip = normalize_ip(switch_ip, '交换机 IP')
-            bind_ip = normalize_ip(row[col_indices['绑定IP']], '绑定 IP')
-            mac = normalize_mac(row[col_indices['绑定MAC']])
-            mode = normalize_mode(row[col_indices['模式']], '模式列')
-            
-            data.append({
-                'switch_ip': switch_ip,
-                'interface': str(row[col_indices['端口']]).strip(),
-                'vlan': normalize_vlan(row[col_indices['VLAN']], 'VLAN 列'),
-                'bind_ip': bind_ip,
-                'mac': mac,
-                'mode': mode
-            })
-            
-        return jsonify({'status': 'success', 'data': data})
-        
-    except Exception as e:
-        return internal_error('解析 Excel 失败，请检查文件格式和内容', e)
-
-
-@app.route('/api/execute_excel_group', methods=['POST'])
-@login_required
-def execute_excel_group():
-    try:
-        data = get_json_data()
-        rows = data.get('rows')
-        if not isinstance(rows, list) or not rows:
-            raise ValueError('请求中必须包含 rows 数组，且不能为空')
-
-        client_ip = request.remote_addr
-        normalized_rows = []
-        switch_ips = set()
-        interfaces = set()
-        modes = set()
-
-        for row in rows:
-            if not isinstance(row, dict):
-                raise ValueError('rows 中存在无效记录')
-            require_fields(row, ['switch_ip', 'interface', 'vlan', 'bind_ip', 'mac', 'mode'])
-            item = {
-                'switch_ip': normalize_ip(row['switch_ip'], '交换机 IP'),
-                'interface': str(row['interface']).strip(),
-                'vlan': normalize_vlan(row['vlan']),
-                'bind_ip': normalize_ip(row['bind_ip'], '绑定 IP'),
-                'mac': normalize_mac(row['mac']),
-                'mode': normalize_mode(row['mode']),
-            }
-            if not item['interface']:
-                raise ValueError('端口不能为空')
-            normalized_rows.append(item)
-            switch_ips.add(item['switch_ip'])
-            interfaces.add(item['interface'])
-            modes.add(item['mode'])
-
-        if len(switch_ips) != 1 or len(interfaces) != 1:
-            raise ValueError('同一次批量下发只允许处理同一交换机的同一个端口')
-        if len(modes) != 1:
-            raise ValueError('同一端口的批量下发必须使用同一种模式')
-
-        switch_ip = normalized_rows[0]['switch_ip']
-        interface = normalized_rows[0]['interface']
-        mode = normalized_rows[0]['mode']
-        runtime = get_switch_runtime_data(switch_ip)
-        mgr = get_manager(runtime)
-        assert_interface_not_protected(mgr, interface)
-
-        raw_log = mgr.configure_port_bindings_batch(interface, normalized_rows, mode)
-        for row in normalized_rows:
-            save_binding_state(
-                row['switch_ip'],
-                row['interface'],
-                row['vlan'],
-                row['bind_ip'],
-                row['mac'],
-                row['mode'],
-            )
-
-        vlan_summary = ','.join(sorted({row['vlan'] for row in normalized_rows}))
-        details = f"[Excel批量聚合] 端口:{interface} | 条数:{len(normalized_rows)} | 模式:{mode} | VLAN:{vlan_summary}"
-        db.log_operation(current_user.username, client_ip, switch_ip, "批量端口绑定", details, "成功")
-        return jsonify({'status': 'success', 'log': format_switch_log(raw_log)})
-    except ValueError as e:
-        if 'client_ip' in locals():
-            db.log_operation(
-                current_user.username,
-                client_ip,
-                normalized_rows[0]['switch_ip'] if 'normalized_rows' in locals() and normalized_rows else 'Unknown',
-                "批量端口绑定",
-                f"[Excel批量聚合] 报错: {str(e)}",
-                "失败",
-            )
-        return json_error(str(e))
-    except Exception as e:
-        if 'client_ip' in locals():
-            db.log_operation(
-                current_user.username,
-                client_ip,
-                normalized_rows[0]['switch_ip'] if 'normalized_rows' in locals() and normalized_rows else 'Unknown',
-                "批量端口绑定",
-                f"[Excel批量聚合] 报错: {str(e)}",
-                "失败",
-            )
-        return internal_error('批量下发失败，请检查设备状态和表格内容', e)
-
-# === 馃搳 Excel 鎵归噺鑷姩鍖栧紩鎿庝笓鐢ㄦ帴鍙?===
-@app.route('/api/execute_excel_row', methods=['POST'])
-@login_required
-def execute_excel_row():
-    try:
-        d = get_json_data()
-        client_ip = request.remote_addr
-        require_fields(d, ['switch_ip', 'interface', 'vlan', 'bind_ip', 'mac', 'mode'])
-        switch_ip = normalize_ip(d.get('switch_ip'), '交换机 IP')
-        interface = str(d.get('interface')).strip()
-        vlan = normalize_vlan(d.get('vlan'))
-        bind_ip = normalize_ip(d.get('bind_ip'), '绑定 IP')
-        mac = normalize_mac(d.get('mac'))
-        mode = normalize_mode(d.get('mode', 'access'))
-        runtime = get_switch_runtime_data(switch_ip)
-        mgr = get_manager(runtime)
-        assert_interface_not_protected(mgr, interface)
-
-        raw_log = mgr.configure_port_binding(interface, vlan, bind_ip, mac, mode)
-        log_output = format_switch_log(raw_log)
-        save_binding_state(switch_ip, interface, vlan, bind_ip, mac, mode)
-        details = f"[Excel批量] 端口:{interface} | IP:{bind_ip} | MAC:{mac} | 模式:{mode} | VLAN:{vlan}"
-        db.log_operation(current_user.username, client_ip, switch_ip, "批量端口绑定", details, "成功")
-
-        return jsonify({'status': 'success', 'log': log_output})
-    except ValueError as e:
-        details = f"[Excel批量] 端口:{locals().get('interface', '')} | IP:{locals().get('bind_ip', '')} | MAC:{locals().get('mac', '')}"
-        db.log_operation(current_user.username, client_ip, locals().get('switch_ip', 'Unknown'), "批量端口绑定", f"{details} | 报错: {str(e)}", "失败")
-        return json_error(str(e))
-    except Exception as e:
-        details = f"[Excel批量] 端口:{interface} | IP:{bind_ip} | MAC:{mac}"
-        db.log_operation(current_user.username, client_ip, switch_ip, "批量端口绑定", f"{details} | 报错: {str(e)}", "失败")
-        return internal_error('批量下发失败，请检查设备状态和参数', e)
-
-# === 鎵归噺澶囦唤鍔熻兘 (瀹岀編鍙屽紩鎿?+ 鏃堕棿鎴崇増) ===
-@app.route('/batch_backup', methods=['POST'])
-@login_required
-def batch_backup():
-    switches = db.get_all_switches()
-    if not switches:
-        return jsonify({'status': 'error', 'msg': '数据库中没有设备，请先添加！'})
-
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    today_dir = os.path.join(BACKUP_ROOT, today)
-    if not os.path.exists(today_dir):
-        os.makedirs(today_dir)
-
-    log_messages = [f"开始执行批量备份，共 {len(switches)} 台设备..."]
-    success_count, fail_count = 0, 0
-
-    for sw in switches:
-        safe_name = sw['name'].replace('/', '_').replace('\\', '_').replace(' ', '_')
-        target_ip = sw['ip']
-        vendor = sw.get('vendor', 'h3c').lower()
-        
-        log_messages.append(f"正在连接: {sw['name']} ({target_ip}) [{vendor.upper()}]...")
-        
-        try:
-            # 馃挕 鍙屽紩鎿庤皟搴?
-            if vendor == 'huawei':
-                mgr = HuaweiManager(target_ip, sw['username'], sw['password'], sw['port'])
-            else:
-                mgr = H3CManager(target_ip, sw['username'], sw['password'], sw['port'])
-                
-            config_text = mgr.get_full_config()
-            
-            # 馃挕 鏂囦欢鍚嶅姞鍏ユ椂鍒嗙鍚庣紑锛岄伩鍏嶄竴澶╁娆¤鐩?
-            time_suffix = datetime.datetime.now().strftime("%H%M")
-            filename = f"{safe_name}_{target_ip}_{time_suffix}.cfg"
-            filepath = os.path.join(today_dir, filename)
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(config_text)
-                
-            success_count += 1
-            log_messages.append(f"<span class='status-permit'>备份成功</span>: 已保存至 {filename}")
-            
-        except Exception as e:
-            fail_count += 1
-            error_msg = str(e)
-            if "Authentication failed" in error_msg: error_msg = "认证失败(密码错误)"
-            elif "timed out" in error_msg: error_msg = "连接超时"
-            log_messages.append(f"<span class='status-deny'>[{target_ip}] 备份失败</span>: {error_msg}")
-            try:
-                db.log_operation(current_user.username, request.remote_addr, target_ip, "单台配置备份", f"失败原因: {error_msg}", "失败")
-            except:
-                pass
-
-    final_msg = f"<br><b>任务结束</b><br>成功: {success_count} 台<br>失败: {fail_count} 台<br>文件保存于: {today_dir}"
-    full_log = "<br>".join(log_messages) + final_msg
-    
-    try:
-        details = f"手动触发批量备份结束。成功: {success_count}, 失败: {fail_count}。存储路径: {today_dir}"
-        status = "成功" if fail_count == 0 else ("部分失败" if success_count > 0 else "全部失败")
-        client_ip = request.remote_addr
-        db.log_operation(current_user.username, client_ip, "ALL_SWITCHES", "手动批量备份", details, status)
-    except Exception as e:
-        pass
-
-    return jsonify({'status': 'success', 'log': full_log})
-
-# === 鈴?鍑屾櫒骞界伒锛氬畾鏃惰嚜鍔ㄥ浠戒换鍔?(瀹岀編鍙屽紩鎿?+ 鏃堕棿鎴崇増) ===
-def auto_backup_task():
-    print(f"\n[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [系统调度] 开始执行凌晨自动备份...")
-    switches = db.get_all_switches()
-    if not switches:
-        return
-
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    today_dir = os.path.join(BACKUP_ROOT, today)
-    if not os.path.exists(today_dir):
-        os.makedirs(today_dir)
-
-    success_count, fail_count = 0, 0
-    save_success_count, save_fail_count = 0, 0
-    auto_save_enabled = db.get_setting('auto_save_after_backup', '1') == '1'
-
-    for sw in switches:
-        safe_name = sw['name'].replace('/', '_').replace('\\', '_').replace(' ', '_')
-        target_ip = sw['ip']
-        vendor = sw.get('vendor', 'h3c').lower()
-        
-        try:
-            # 馃挕 鍙屽紩鎿庤皟搴?
-            if vendor == 'huawei':
-                mgr = HuaweiManager(target_ip, sw['username'], sw['password'], sw['port'])
-            else:
-                mgr = H3CManager(target_ip, sw['username'], sw['password'], sw['port'])
-                
-            config_text = mgr.get_full_config()
-            
-            # 馃挕 鏂囦欢鍚嶅姞鍏ユ椂鍒嗙鍚庣紑
-            time_suffix = datetime.datetime.now().strftime("%H%M")
-            filename = f"{safe_name}_{target_ip}_{time_suffix}.cfg"
-            filepath = os.path.join(today_dir, filename)
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(config_text)
-                
-            success_count += 1
-            print(f"  [{vendor.upper()}] {target_ip} 备份成功 -> {filename}")
-            if auto_save_enabled:
-                try:
-                    save_output = mgr.save_config_to_device()
-                    save_success_count += 1
-                    db.log_operation(
-                        "System(系统)",
-                        "Localhost",
-                        target_ip,
-                        "定时备份后保存配置",
-                        f"备份成功后执行保存配置。备份文件: {filename}",
-                        "成功",
-                    )
-                    print(f"  [{vendor.upper()}] {target_ip} 保存配置成功")
-                except Exception as save_exc:
-                    save_fail_count += 1
-                    save_error = str(save_exc)
-                    db.log_operation(
-                        "System(系统)",
-                        "Localhost",
-                        target_ip,
-                        "定时备份后保存配置",
-                        f"备份文件: {filename} | 保存失败原因: {save_error}",
-                        "失败",
-                    )
-                    print(f"  [{vendor.upper()}] {target_ip} 保存配置失败: {save_error}")
-            else:
-                print(f"  [{vendor.upper()}] {target_ip} 已按系统设置跳过保存配置")
-        except Exception as e:
-            fail_count += 1
-            error_msg = str(e)
-            if "Authentication failed" in error_msg: error_msg = "认证失败(密码错误)"
-            elif "timed out" in error_msg: error_msg = "连接超时"
-            print(f"  [{vendor.upper()}] {target_ip} 备份失败: {error_msg}")
-            try:
-                db.log_operation("System(系统)", "Localhost", target_ip, "定时单台备份", f"失败原因: {error_msg}", "失败")
-            except Exception as log_e:
-                pass
-
-    details = (
-        f"任务结束。共 {len(switches)} 台。备份成功: {success_count}, 备份失败: {fail_count}。"
-        f"备份后自动保存:{'开启' if auto_save_enabled else '关闭'}。"
-        f"保存成功: {save_success_count}, 保存失败: {save_fail_count}。路径: {today_dir}"
-    )
-    status = "成功" if fail_count == 0 else ("部分失败" if success_count > 0 else "全部失败")
-    
-    try:
-        db.log_operation("System(系统)", "Localhost", "ALL_SWITCHES", "定时自动备份", details, status)
-    except Exception as log_e:
-        pass
-    print(f"[系统调度] 备份任务执行完毕：{details}\n")
-
-
-def auto_sync_mac_bindings_task():
-    start_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"\n[{start_time}] [系统调度] 开始同步终端绑定信息...")
-    try:
-        result = run_mac_bindings_sync("System(系统)", "Localhost")
-        if result['status'] == 'busy':
-            print("[系统调度] 终端绑定信息同步跳过：已有同步任务正在执行")
-            return
-        data = result.get('data', {})
-        details = (
-            f"扫描交换机:{data.get('scanned_switches', 0)} | "
-            f"发现绑定:{data.get('found', 0)} | "
-            f"新增:{data.get('created', 0)} | "
-            f"更新:{data.get('updated', 0)} | "
-            f"未变:{data.get('unchanged', 0)} | "
-            f"错误:{len(data.get('errors', []))}"
-        )
-        print(f"[系统调度] 终端绑定信息同步完成：{details}\n")
-    except Exception as exc:
-        print(f"[系统调度] 终端绑定信息同步失败：{exc}")
-        try:
-            db.log_operation(
-                "System(系统)",
-                "Localhost",
-                "ALL_SWITCHES",
-                "同步终端绑定信息",
-                f"定时同步失败: {exc}",
-                "失败",
-            )
-        except Exception:
-            pass
-
-
-def auto_data_export_task():
-    try:
-        settings = db.get_system_settings()
-        if not settings.get('auto_data_export_enabled'):
-            print("[系统调度] 自动数据包导出已关闭")
-            return
-        path = write_data_package_to_dir(settings.get('auto_data_export_dir'))
-        db.log_operation("System(系统)", "Localhost", "LOCAL", "自动导出数据包", f"导出路径: {path}", "成功")
-        print(f"[系统调度] 自动数据包导出完成: {path}")
-    except Exception as exc:
-        print(f"[系统调度] 自动数据包导出失败：{exc}")
-        try:
-            db.log_operation("System(系统)", "Localhost", "LOCAL", "自动导出数据包", f"失败原因: {exc}", "失败")
-        except Exception:
-            pass
-
-
-def auto_collect_switch_alarm_logs_task():
-    try:
-        settings = db.get_system_settings()
-        if not settings.get('auto_alarm_collect_enabled'):
-            print("[系统调度] 自动采集交换机日志告警已关闭")
-            return
-        switches = db.get_all_switches()
-        success_count = 0
-        fail_count = 0
-        for sw in switches:
-            switch_ip = sw.get('ip')
-            try:
-                collect_switch_alarm_report(switch_ip)
-                success_count += 1
-                print(f"[系统调度] 日志告警采集成功: {sw.get('name') or switch_ip}({switch_ip})")
-            except Exception as exc:
-                fail_count += 1
-                db.add_switch_alarm_report(
-                    switch_ip=switch_ip,
-                    switch_name=sw.get('name', ''),
-                    vendor=sw.get('vendor', ''),
-                    status='失败',
-                    error=str(exc)[:500],
-                )
-                print(f"[系统调度] 日志告警采集失败: {sw.get('name') or switch_ip}({switch_ip}) - {exc}")
-        db.log_operation(
-            "System(系统)",
-            "Localhost",
-            "ALL_SWITCHES",
-            "定时采集交换机日志告警",
-            f"成功 {success_count} 台，失败 {fail_count} 台",
-            "成功" if fail_count == 0 else "部分失败",
-        )
-    except Exception as exc:
-        print(f"[系统调度] 自动采集交换机日志告警失败：{exc}")
-        try:
-            db.log_operation("System(系统)", "Localhost", "ALL_SWITCHES", "定时采集交换机日志告警", f"失败原因: {exc}", "失败")
-        except Exception:
-            pass
-
-# 调度器初始化与启动
-scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
-
-
-def configure_scheduler():
-    settings = db.get_system_settings()
-    scheduler.add_job(
-        func=auto_backup_task,
-        trigger="cron",
-        hour=settings.get('auto_backup_hour', 2),
-        minute=settings.get('auto_backup_minute', 37),
-        id="auto_backup",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        func=auto_sync_mac_bindings_task,
-        trigger="cron",
-        hour=settings.get('auto_sync_hour', 3),
-        minute=settings.get('auto_sync_minute', 20),
-        id="auto_sync_mac_bindings",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        func=auto_data_export_task,
-        trigger="cron",
-        hour=settings.get('auto_data_export_hour', 4),
-        minute=settings.get('auto_data_export_minute', 10),
-        id="auto_data_export",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        func=auto_collect_switch_alarm_logs_task,
-        trigger="cron",
-        hour=settings.get('auto_alarm_collect_hour', 4),
-        minute=settings.get('auto_alarm_collect_minute', 40),
-        id="auto_alarm_collect",
-        replace_existing=True,
+    return render_template(
+        'index.html',
+        username=current_user.username,
+        user_role=current_user.role,
+        is_admin=current_user.is_admin,
     )
 
 
-def start_scheduler():
-    configure_scheduler()
-    if not scheduler.running:
-        scheduler.start()
+app.register_blueprint(create_asset_user_read_blueprint(
+    db,
+    send_xlsx_workbook,
+    autosize_worksheet,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_asset_manage_blueprint(
+    db,
+    get_json_data,
+    require_fields,
+    normalize_ip,
+    normalize_port,
+    normalize_vendor,
+    normalize_switch_role,
+    json_error,
+    internal_error,
+    permission_required,
+    has_permission,
+))
+app.register_blueprint(create_user_manage_blueprint(
+    db,
+    get_json_data,
+    require_fields,
+    validate_password_policy,
+    json_error,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_switch_connect_blueprint(
+    db,
+    get_json_data,
+    require_fields,
+    normalize_ip,
+    normalize_port,
+    normalize_vendor,
+    get_manager,
+    json_error,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_access_manage_blueprint(
+    db,
+    get_json_data,
+    require_fields,
+    normalize_ip,
+    normalize_port,
+    normalize_vendor,
+    normalize_mac,
+    normalize_mode,
+    normalize_vlan,
+    normalize_acl_number,
+    get_manager,
+    assert_interface_not_protected,
+    save_binding_state,
+    format_switch_log,
+    json_error,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_roam_manage_blueprint(
+    db,
+    get_json_data,
+    require_fields,
+    normalize_ip,
+    normalize_mac,
+    normalize_mode,
+    normalize_vlan,
+    get_terminal_binding_record,
+    get_mac_sync_state_snapshot,
+    MAC_SYNC_LOCK,
+    scan_one_switch_for_terminal,
+    normalize_terminal_lookup,
+    sync_all_switch_bindings,
+    assert_no_ip_conflict,
+    get_switch_runtime_data,
+    get_manager,
+    assert_interface_not_protected,
+    port_has_binding,
+    save_binding_state,
+    format_switch_log,
+    json_error,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_excel_manage_blueprint(
+    db,
+    get_json_data,
+    require_fields,
+    normalize_ip,
+    normalize_mac,
+    normalize_mode,
+    normalize_vlan,
+    get_switch_runtime_data,
+    get_manager,
+    assert_interface_not_protected,
+    save_binding_state,
+    format_switch_log,
+    send_xlsx_workbook,
+    autosize_worksheet,
+    json_error,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_terminal_state_blueprint(
+    db,
+    normalize_ip,
+    get_json_data,
+    get_mac_sync_state_snapshot,
+    MAC_SYNC_LOCK,
+    run_mac_bindings_sync,
+    json_error,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_profile_health_blueprint(
+    db,
+    get_json_data,
+    get_manager,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_task_runtime_blueprint(permission_required))
+app.register_blueprint(create_snmp_status_blueprint(
+    db,
+    get_json_data,
+    require_fields,
+    normalize_ip,
+    json_error,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_port_snapshot_blueprint(
+    db,
+    get_json_data,
+    normalize_ip,
+    get_switch_runtime_data,
+    get_manager,
+    json_error,
+    internal_error,
+    permission_required,
+))
+app.register_blueprint(create_compliance_analysis_blueprint(internal_error))
 
+
+scheduler_service = create_scheduler_service(
+    db=db,
+    h3c_manager_cls=H3CManager,
+    huawei_manager_cls=HuaweiManager,
+    backup_root=BACKUP_ROOT,
+    write_data_package_to_dir=lambda target_dir=None: service_write_data_package_to_dir(db, APP_VERSION, DATA_PACKAGE_DIR, target_dir),
+    run_mac_bindings_sync=run_mac_bindings_sync,
+    collect_switch_alarm_report=lambda switch_ip: service_collect_switch_alarm_report(db, get_manager, get_switch_runtime_data, switch_ip),
+)
+configure_scheduler = scheduler_service['configure_scheduler']
+start_scheduler = scheduler_service['start_scheduler']
+
+
+app.register_blueprint(create_system_manage_blueprint(
+    db,
+    get_json_data,
+    json_error,
+    internal_error,
+    permission_required,
+    configure_scheduler,
+))
 
 start_scheduler()
 # ============================================
@@ -2894,3 +895,4 @@ start_scheduler()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=True)
+

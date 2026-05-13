@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="360" viewBox="0 0 860 360" role="img" aria-label="告警中心示意图">
+  <rect width="860" height="360" rx="12" fill="#f5f7fb"/>
+  <rect x="24" y="24" width="812" height="58" rx="8" fill="#ffffff" stroke="#b6cee8"/>
+  <text x="48" y="59" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#182433">告警中心</text>
+  <g font-family="Arial, sans-serif">
+    <rect x="24" y="104" width="120" height="58" rx="8" fill="#d63939"/>
+    <text x="52" y="140" font-size="24" font-weight="700" fill="#ffffff">高危</text>
+    <rect x="160" y="104" width="120" height="58" rx="8" fill="#f59f00"/>
+    <text x="188" y="140" font-size="24" font-weight="700" fill="#182433">中危</text>
+    <rect x="296" y="104" width="120" height="58" rx="8" fill="#4299e1"/>
+    <text x="324" y="140" font-size="24" font-weight="700" fill="#ffffff">低危</text>
+    <rect x="432" y="104" width="120" height="58" rx="8" fill="#2fb344"/>
+    <text x="460" y="140" font-size="24" font-weight="700" fill="#ffffff">正常</text>
+  </g>
+  <rect x="24" y="190" width="812" height="130" rx="8" fill="#ffffff" stroke="#dbe5f2"/>
+  <text x="48" y="220" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#182433">完整设备列表：默认分批显示，滚动继续加载</text>
+  <g font-family="Arial, sans-serif" font-size="13">
+    <rect x="48" y="242" width="72" height="26" rx="13" fill="#fee2e2"/>
+    <text x="64" y="260" fill="#b91c1c" font-weight="700">高风险</text>
+    <text x="136" y="260" fill="#182433">10F-主楼-互联网接入交换机</text>
+    <text x="420" y="260" fill="#667382">高频端口 / ACL / 链路抖动</text>
+    <line x1="48" y1="282" x2="812" y2="282" stroke="#dbe5f2"/>
+    <text x="48" y="306" fill="#667382">筛选高危、未处理、采集失败后，列表会从第一条重新分批展示。</text>
+  </g>
+</svg>

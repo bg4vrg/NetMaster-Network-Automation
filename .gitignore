@@ -28,6 +28,17 @@ net_assets.key
 
 # 备份文件
 .bak
+*.log
+*.zip
+*.7z
+*.rar
+*.tar.gz
+*.tgz
+
+# 本地运行输出和源码/环境打包产物
+server-*.log
+sygaSwitchAdmin_source_*.zip
+sygaSwitchAdmin_base.tar.gz
 
 # 本地开发记录：GitHub 仅保留 README.md
 *.md

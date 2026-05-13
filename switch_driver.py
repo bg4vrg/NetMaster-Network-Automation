@@ -155,6 +155,14 @@ class H3CManager:
         
         # 馃敟 鏍稿績淇锛氶鎵弿鎺ュ彛鐗瑰緛銆傚鏋滃瓨鍦?ip verify source锛岃瘉鏄庤繖鏄?Access 涓ユ牸妯″紡
         is_strict_access = 'ip verify source' in output_iface
+        if 'port link-type hybrid' in output_iface:
+            port_mode = 'hybrid'
+        elif 'port link-type trunk' in output_iface or 'port trunk ' in output_iface:
+            port_mode = 'trunk'
+        elif is_strict_access or 'port link-type access' in output_iface or 'port access vlan' in output_iface:
+            port_mode = 'access'
+        else:
+            port_mode = 'unknown'
 
         # 1. 瑙ｆ瀽鎺ュ彛閰嶇疆
         for line in output_iface.split('\n'):
@@ -223,7 +231,7 @@ class H3CManager:
                                 'vlan': vlan_val
                             })
 
-        return {'vlan': vlan, 'bindings': bindings, 'description': description}, output_iface + "\n\n[Global Bindings]\n" + output_global
+        return {'vlan': vlan, 'mode': port_mode, 'bindings': bindings, 'description': description}, output_iface + "\n\n[Global Bindings]\n" + output_global
 
     def get_all_bindings(self):
         conn = self._get_connection()
@@ -619,15 +627,6 @@ class HuaweiManager(H3CManager):
         finally:
             conn.disconnect()
 
-    def get_alarm_logs(self):
-        conn = self._get_connection()
-        try:
-            conn.send_command("screen-length 0 temporary", read_timeout=SSH_COMMAND_TIMEOUT)
-            output = conn.send_command("display logbuffer", read_timeout=SSH_LONG_COMMAND_TIMEOUT)
-        finally:
-            conn.disconnect()
-        return output
-
         vlan = ""
         description = ""
         bindings = []
@@ -636,6 +635,14 @@ class HuaweiManager(H3CManager):
             'ip source check user-bind enable' in output_iface
             or 'ipv4 source check user-bind enable' in output_iface
         )
+        if 'port link-type hybrid' in output_iface:
+            port_mode = 'hybrid'
+        elif 'port link-type trunk' in output_iface or 'port trunk ' in output_iface:
+            port_mode = 'trunk'
+        elif is_strict_access or 'port link-type access' in output_iface or 'port default vlan' in output_iface:
+            port_mode = 'access'
+        else:
+            port_mode = 'unknown'
 
         import re
         for line in output_iface.split('\n'):
@@ -690,10 +697,20 @@ class HuaweiManager(H3CManager):
 
         return {
             'vlan': vlan,
+            'mode': port_mode,
             'bindings': bindings,
             'description': description,
             'query_scope': query_scope
         }, output_iface + "\n\n[Global User-Bind]\n" + output_global
+
+    def get_alarm_logs(self):
+        conn = self._get_connection()
+        try:
+            conn.send_command("screen-length 0 temporary", read_timeout=SSH_COMMAND_TIMEOUT)
+            output = conn.send_command("display logbuffer", read_timeout=SSH_LONG_COMMAND_TIMEOUT)
+        finally:
+            conn.disconnect()
+        return output
 
     def get_all_bindings(self):
         conn = self._get_connection()
