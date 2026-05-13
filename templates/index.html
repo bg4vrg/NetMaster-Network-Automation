@@ -116,7 +116,7 @@
             .device-action-group, .device-action-group .btn { width: 100%; }
         }
     </style>
-    <link href="/static/css/netmaster-tabler.css?v=2.54.5" rel="stylesheet">
+    <link href="/static/css/netmaster-tabler.css?v=2.54.8" rel="stylesheet">
 </head>
 <body>
 
@@ -254,7 +254,7 @@
         <li class="nav-item" role="presentation"><button class="nav-link" id="port-tab-btn" data-bs-toggle="tab" data-bs-target="#port-tab-pane" type="button" role="tab" onclick="autoLoadPortListForSelectedSwitch(true)">端口 IP+MAC 绑定</button></li>
         <li class="nav-item" role="presentation"><button class="nav-link text-success fw-bold" id="excel-tab-btn" data-bs-toggle="tab" data-bs-target="#excel-tab-pane" type="button" role="tab">Excel 批量部署</button></li>
         <li class="nav-item" role="presentation"><button class="nav-link text-primary fw-bold" id="roam-tab-btn" data-bs-toggle="tab" data-bs-target="#roam-tab-pane" type="button" role="tab">终端漫游</button></li>
-        <li class="nav-item" role="presentation"><button class="nav-link" id="terminal-list-tab-btn" data-bs-toggle="tab" data-bs-target="#terminal-list-tab-pane" type="button" role="tab" onclick="loadTerminalList()">终端列表</button></li>
+        <li class="nav-item" role="presentation"><button class="nav-link" id="terminal-list-tab-btn" data-bs-toggle="tab" data-bs-target="#terminal-list-tab-pane" type="button" role="tab" onclick="ensureTerminalListLoaded()">终端列表</button></li>
         <li class="nav-item" role="presentation"><button class="nav-link" id="acl-tab-btn" data-bs-toggle="tab" data-bs-target="#acl-tab-pane" type="button" role="tab">ACL 策略组管理</button></li>
         <li class="nav-item" role="presentation"><button class="nav-link text-warning fw-bold" id="diff-tab-btn" data-bs-toggle="tab" data-bs-target="#diff-tab-pane" type="button" role="tab" onclick="loadBackupFiles()">配置差异比对</button></li>
         <li class="nav-item" role="presentation"><button class="nav-link" id="profile-tab-btn" data-bs-toggle="tab" data-bs-target="#profile-tab-pane" type="button" role="tab" onclick="loadPortProfiles(true)">端口画像</button></li>
@@ -1072,29 +1072,29 @@
                             <div class="text-muted small">全网已绑定终端查询、筛选、定位和导出入口；数据来自本地终端绑定库。</div>
                         </div>
                         <div class="d-flex gap-2">
-                            <button class="btn btn-outline-primary btn-sm" onclick="loadTerminalList()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
+                            <button class="btn btn-outline-primary btn-sm" onclick="loadTerminalList(true)"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
                             <button class="btn btn-success btn-sm" onclick="exportTerminalListCsv()"><i class="bi bi-download"></i> 导出 CSV</button>
                         </div>
                     </div>
                     <div class="row g-2 mb-3">
                         <div class="col-lg-4 col-md-12">
                             <input type="text" class="form-control form-control-sm" id="terminal_list_search"
-                                   placeholder="搜索 MAC / IP / 交换机 / 端口 / VLAN" oninput="renderTerminalListRows()">
+                                   placeholder="搜索 MAC / IP / 交换机 / 端口 / VLAN" oninput="scheduleTerminalListReload()">
                         </div>
                         <div class="col-lg-3 col-md-4">
-                            <select class="form-select form-select-sm" id="terminal_list_switch_filter" onchange="loadTerminalList()">
+                            <select class="form-select form-select-sm" id="terminal_list_switch_filter" onchange="loadTerminalList(true)">
                                 <option value="">全部交换机</option>
                             </select>
                         </div>
                         <div class="col-lg-2 col-md-4">
-                            <select class="form-select form-select-sm" id="terminal_list_mode_filter" onchange="renderTerminalListRows()">
+                            <select class="form-select form-select-sm" id="terminal_list_mode_filter" onchange="loadTerminalList(true)">
                                 <option value="">全部模式</option>
                                 <option value="access">Access</option>
                                 <option value="trunk">Trunk</option>
                             </select>
                         </div>
                         <div class="col-lg-3 col-md-4">
-                            <select class="form-select form-select-sm" id="terminal_list_state_filter" onchange="renderTerminalListRows()">
+                            <select class="form-select form-select-sm" id="terminal_list_state_filter" onchange="loadTerminalList(true)">
                                 <option value="">全部状态</option>
                                 <option value="ip_conflict">同 IP 多 MAC</option>
                                 <option value="mac_conflict">同 MAC 多位置</option>
@@ -1108,7 +1108,7 @@
                         <span class="badge bg-info-subtle text-info border" id="terminal_list_mac_conflict_count">MAC 多位置 0</span>
                         <span class="badge bg-secondary-subtle text-secondary border" id="terminal_list_updated_at">最后读取 -</span>
                     </div>
-                    <div class="table-responsive border rounded terminal-list-table">
+                    <div class="table-responsive border rounded terminal-list-table" id="terminal_list_scroll">
                         <table class="table table-sm table-hover align-middle mb-0">
                             <thead class="table-light sticky-top">
                                 <tr>
@@ -1124,6 +1124,7 @@
                                 <tr><td colspan="6" class="text-center text-muted py-3">点击刷新加载终端列表</td></tr>
                             </tbody>
                         </table>
+                        <div id="terminal_list_more" class="text-center text-muted small py-2 border-top d-none">滚动到底部加载更多终端</div>
                     </div>
                 </div>
             </div>
@@ -1536,6 +1537,7 @@
     let macSyncPollTimer = null;
     let lastMacBindingsRows = [];
     let terminalListRows = [];
+    let terminalListState = {offset: 0, limit: 80, total: 0, hasMore: true, loading: false, requestId: 0, reloadTimer: null, loaded: false, pendingReset: false};
     let portProfileRows = [];
     let complianceRiskRows = [];
     let complianceFilteredRows = [];
@@ -1759,6 +1761,14 @@
         const state = item.alarm_state || 'open';
         const stateBadge = state === 'ack' ? '<span class="badge bg-primary">已确认</span>' : (state === 'ignored' ? '<span class="badge bg-secondary">已忽略</span>' : '<span class="badge bg-danger">未处理</span>');
         const noteHtml = item.alarm_note ? `<div class="small text-muted mt-1">备注：${item.alarm_note} ${item.state_updated_by ? ' | ' + item.state_updated_by : ''} ${item.state_update_time || ''}</div>` : '';
+        const categoryHtml = categories || '<span class="small text-muted">无明显分类告警</span>';
+        const portHtml = ports || '<span class="small text-muted">暂无高频端口</span>';
+        const actionButtons = compact ? '' : `<div class="alarm-device-actions">
+            <button class="btn btn-outline-primary btn-sm" type="button" onclick="toggleAlarmDetail('${collapseId}', this)" title="展开/收起详情"><i class="bi bi-card-list"></i></button>
+            <button class="btn btn-outline-success btn-sm" onclick="updateAlarmState('${item.switch_ip}', 'ack')" title="确认"><i class="bi bi-check2-circle"></i></button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="updateAlarmState('${item.switch_ip}', 'ignored')" title="忽略"><i class="bi bi-eye-slash"></i></button>
+            <button class="btn btn-outline-dark btn-sm" onclick="updateAlarmState('${item.switch_ip}', 'open')" title="重新打开"><i class="bi bi-arrow-counterclockwise"></i></button>
+        </div>`;
         if (compact) {
             const primaryInfo = item.error || suggestions || `${riskLabel(risk)}，风险分 ${item.risk_score || 0}`;
             const mainPort = (item.top_ports || []).find(p => p && p.port);
@@ -1773,32 +1783,56 @@
             </button>`;
         }
         return `<div class="alarm-device-card ${risk}" id="${cardId}">
-            <div class="d-flex justify-content-between gap-2">
-                <div>
+            <div class="alarm-device-layout">
+                <div class="alarm-device-identity">
+                    <div class="alarm-device-section-title">设备</div>
                     <div class="fw-bold">${item.switch_name || item.switch_ip} <span class="text-muted fw-normal">${item.switch_ip}</span> ${stateBadge}</div>
                     <div class="small text-muted">${item.timestamp || '-'} | ${item.status || '-'} | 优先级 ${item.priority_score || 0}</div>
                 </div>
-                <div class="text-end">
+                <div class="alarm-device-metrics">
+                    <div class="alarm-device-section-title">告警统计</div>
+                    <div class="alarm-stat-grid">
+                        <span><b>${item.total_lines || 0}</b><em>总行数</em></span>
+                        <span><b>${item.critical_count || 0}</b><em>严重</em></span>
+                        <span><b>${item.warning_count || 0}</b><em>告警</em></span>
+                    </div>
+                    <div class="alarm-chip-row alarm-chip-row-tight">${categoryHtml}</div>
+                </div>
+                <div class="alarm-device-ports">
+                    <div class="alarm-device-section-title">高频端口</div>
+                    <div class="alarm-chip-row alarm-chip-row-tight">${portHtml}</div>
+                </div>
+                <div class="alarm-device-advice">
+                    <div class="alarm-device-section-title">处理建议</div>
+                    <div class="small alarm-device-suggestion">${item.error || suggestions || '未发现明显严重告警关键字。'}</div>
+                    ${noteHtml}
+                </div>
+                <div class="alarm-device-side">
                     <span class="badge ${risk === 'high' ? 'bg-danger' : (risk === 'medium' ? 'bg-warning text-dark' : (risk === 'failed' ? 'bg-secondary' : 'bg-success'))}">${riskLabel(risk)}</span>
-                    <div class="small text-muted">风险分 ${item.risk_score || 0}</div>
+                    ${actionButtons}
                 </div>
             </div>
-            <div class="small mt-2">总行数 ${item.total_lines || 0}，严重 ${item.critical_count || 0}，告警 ${item.warning_count || 0}</div>
-            <div class="alarm-chip-row">${categories || '<span class="small text-muted">无明显分类告警</span>'}</div>
-            <div class="alarm-chip-row">${ports || ''}</div>
-            <div class="small mt-2">${item.error || suggestions || '未发现明显严重告警关键字。'}</div>
-            ${noteHtml}
-            ${compact ? '' : `<div class="d-flex flex-wrap gap-2 mt-2">
-                <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}" title="详情/命令/日志"><i class="bi bi-card-list"></i></button>
-                <button class="btn btn-outline-success btn-sm" onclick="updateAlarmState('${item.switch_ip}', 'ack')" title="确认"><i class="bi bi-check2-circle"></i></button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="updateAlarmState('${item.switch_ip}', 'ignored')" title="忽略"><i class="bi bi-eye-slash"></i></button>
-                <button class="btn btn-outline-dark btn-sm" onclick="updateAlarmState('${item.switch_ip}', 'open')" title="重新打开"><i class="bi bi-arrow-counterclockwise"></i></button>
-            </div>
+            ${compact ? '' : `
             <div class="collapse mt-2" id="${collapseId}">
                 <div class="border rounded bg-light p-2 mb-2"><b>建议排查命令</b>${commands || '<div class="small text-muted">暂无针对性命令建议。</div>'}</div>
                 <div class="border rounded bg-white p-2" style="max-height:260px; overflow:auto;">${matchedHtml || '<span class="small text-muted">无匹配原始日志。</span>'}</div>
             </div>`}
         </div>`;
+    }
+
+    function toggleAlarmDetail(collapseId, btn) {
+        const panel = document.getElementById(collapseId);
+        if (!panel) return;
+        const icon = btn ? btn.querySelector('i') : null;
+        const isOpen = panel.classList.contains('show');
+        if (window.bootstrap && window.bootstrap.Collapse) {
+            const instance = window.bootstrap.Collapse.getOrCreateInstance(panel, {toggle: false});
+            isOpen ? instance.hide() : instance.show();
+        } else {
+            panel.classList.toggle('show', !isOpen);
+        }
+        if (btn) btn.title = isOpen ? '展开详情' : '收起详情';
+        if (icon) icon.className = isOpen ? 'bi bi-card-list' : 'bi bi-chevron-up';
     }
 
     function scrollToAlarmDevice(cardId) {
@@ -1853,6 +1887,13 @@
             alarmDeviceScroll.addEventListener('scroll', () => {
                 const nearBottom = alarmDeviceScroll.scrollTop + alarmDeviceScroll.clientHeight >= alarmDeviceScroll.scrollHeight - 64;
                 if (nearBottom) renderAlarmDashboardDevices(false);
+            });
+        }
+        const terminalListScroll = document.getElementById('terminal_list_scroll');
+        if (terminalListScroll) {
+            terminalListScroll.addEventListener('scroll', () => {
+                const nearBottom = terminalListScroll.scrollTop + terminalListScroll.clientHeight >= terminalListScroll.scrollHeight - 64;
+                if (nearBottom) loadTerminalList(false);
             });
         }
         const complianceScroll = document.getElementById('compliance_result_scroll');
@@ -5317,26 +5358,81 @@
         });
     }
 
-    async function loadTerminalList() {
-        const tbody = document.getElementById('terminal_list_body');
-        if (!tbody) return;
+    function scheduleTerminalListReload() {
+        window.clearTimeout(terminalListState.reloadTimer);
+        terminalListState.reloadTimer = window.setTimeout(() => loadTerminalList(true), 320);
+    }
+
+    function ensureTerminalListLoaded() {
+        if (terminalListState.loaded || terminalListState.loading) return;
+        loadTerminalList(true);
+    }
+
+    function getTerminalListParams(reset = false, exportAll = false) {
         const switchIp = (document.getElementById('terminal_list_switch_filter')?.value || '').trim();
-        const query = new URLSearchParams({limit: '3000'});
+        const keyword = (document.getElementById('terminal_list_search')?.value || '').trim();
+        const mode = document.getElementById('terminal_list_mode_filter')?.value || '';
+        const state = document.getElementById('terminal_list_state_filter')?.value || '';
+        const query = new URLSearchParams({
+            paged: '1',
+            limit: exportAll ? '5000' : String(terminalListState.limit),
+            offset: exportAll ? '0' : String(reset ? 0 : terminalListState.offset),
+        });
         if (switchIp) query.set('switch_ip', switchIp);
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">正在读取终端列表...</td></tr>';
+        if (keyword) query.set('keyword', keyword);
+        if (mode) query.set('mode', mode);
+        if (state) query.set('state', state);
+        return query;
+    }
+
+    async function loadTerminalList(reset = true) {
+        const tbody = document.getElementById('terminal_list_body');
+        const more = document.getElementById('terminal_list_more');
+        if (!tbody) return;
+        if (terminalListState.loading) {
+            if (reset) terminalListState.pendingReset = true;
+            return;
+        }
+        if (!reset && !terminalListState.hasMore) return;
+        if (reset) {
+            terminalListState.offset = 0;
+            terminalListState.total = 0;
+            terminalListState.hasMore = true;
+            terminalListRows = [];
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">正在读取终端列表...</td></tr>';
+            if (more) more.classList.add('d-none');
+        }
+        terminalListState.loading = true;
+        const requestId = ++terminalListState.requestId;
+        const query = getTerminalListParams(reset);
         try {
             const response = await fetch(`/api/mac_bindings?${query.toString()}`);
             if (response.redirected) { window.location.href = response.url; return; }
             const result = await response.json();
             if (result.status !== 'success') throw new Error(result.msg || '读取失败');
-            terminalListRows = result.data || [];
+            if (requestId !== terminalListState.requestId) return;
+            const data = result.data || {};
+            const rows = data.rows || [];
+            terminalListRows = reset ? rows : terminalListRows.concat(rows);
+            terminalListState.offset = data.next_offset ?? terminalListRows.length;
+            terminalListState.total = Number(data.total || terminalListRows.length);
+            terminalListState.hasMore = !!data.has_more;
+            terminalListState.loaded = true;
             const updated = document.getElementById('terminal_list_updated_at');
             if (updated) updated.innerText = `最后读取 ${new Date().toLocaleString()}`;
-            renderTerminalListRows();
+            renderTerminalListRows(data.summary || {});
         } catch (error) {
             console.error(error);
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">读取终端列表失败</td></tr>';
+            if (reset) tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">读取终端列表失败</td></tr>';
             showToast('读取终端列表失败', 'danger');
+        } finally {
+            if (requestId === terminalListState.requestId) {
+                terminalListState.loading = false;
+                if (terminalListState.pendingReset) {
+                    terminalListState.pendingReset = false;
+                    window.setTimeout(() => loadTerminalList(true), 0);
+                }
+            }
         }
     }
 
@@ -5347,38 +5443,25 @@
         return Math.floor((Date.now() - time.getTime()) / 86400000);
     }
 
-    function renderTerminalListRows() {
+    function renderTerminalListRows(summary = {}) {
         const tbody = document.getElementById('terminal_list_body');
+        const more = document.getElementById('terminal_list_more');
         if (!tbody) return;
         const rows = terminalListRows || [];
-        const query = (document.getElementById('terminal_list_search')?.value || '').trim().toLowerCase();
-        const modeFilter = document.getElementById('terminal_list_mode_filter')?.value || '';
-        const stateFilter = document.getElementById('terminal_list_state_filter')?.value || '';
-        const {ipConflicts, macConflicts} = buildBindingConflictSets(rows);
-        const staleSet = new Set(rows.filter(row => (getBindingStaleDays(row) ?? 0) > 3).map(row => `${row.switch_ip}|${row.port}|${row.mac_address}|${row.ip_address}`));
+        const total = terminalListState.total || rows.length;
+        document.getElementById('terminal_list_count').innerText = `显示 ${rows.length} / 共 ${total} 条`;
+        document.getElementById('terminal_list_ip_conflict_count').innerText = `IP 冲突 ${Number(summary.ip_conflict_count || 0)}`;
+        document.getElementById('terminal_list_mac_conflict_count').innerText = `MAC 多位置 ${Number(summary.mac_conflict_count || 0)}`;
 
-        const filtered = rows.filter(row => {
-            if (modeFilter && row.mode !== modeFilter) return false;
-            if (stateFilter === 'ip_conflict' && !ipConflicts.has(row.ip_address)) return false;
-            if (stateFilter === 'mac_conflict' && !macConflicts.has(row.mac_address)) return false;
-            if (stateFilter === 'stale' && !staleSet.has(`${row.switch_ip}|${row.port}|${row.mac_address}|${row.ip_address}`)) return false;
-            if (!query) return true;
-            return [row.mac_address, row.ip_address, row.switch_name, row.switch_ip, row.port, row.vlan, row.mode, row.update_time]
-                .some(value => String(value || '').toLowerCase().includes(query));
-        });
-
-        document.getElementById('terminal_list_count').innerText = `显示 ${filtered.length} / 共 ${rows.length} 条`;
-        document.getElementById('terminal_list_ip_conflict_count').innerText = `IP 冲突 ${ipConflicts.size}`;
-        document.getElementById('terminal_list_mac_conflict_count').innerText = `MAC 多位置 ${macConflicts.size}`;
-
-        if (!filtered.length) {
+        if (!rows.length) {
             tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">没有符合条件的终端记录</td></tr>';
+            if (more) more.classList.add('d-none');
             return;
         }
         tbody.innerHTML = '';
-        filtered.forEach(row => {
-            const isIpConflict = ipConflicts.has(row.ip_address);
-            const isMacConflict = macConflicts.has(row.mac_address);
+        rows.forEach(row => {
+            const isIpConflict = Number(row.ip_conflict || 0) === 1;
+            const isMacConflict = Number(row.mac_conflict || 0) === 1;
             const staleDays = getBindingStaleDays(row);
             const staleBadge = staleDays !== null && staleDays > 3 ? `<span class="badge bg-secondary-subtle text-secondary border ms-1">${staleDays}天未确认</span>` : '';
             const conflictBadge = isIpConflict
@@ -5406,6 +5489,12 @@
                     </td>
                 </tr>`;
         });
+        if (more) {
+            more.classList.remove('d-none');
+            more.textContent = terminalListState.loading
+                ? '正在加载更多终端...'
+                : (terminalListState.hasMore ? `已显示 ${rows.length} / ${total}，滚动到底部加载更多终端` : `已显示全部 ${total} 条终端`);
+        }
     }
 
     function useTerminalForRoam(query, switchIp) {
@@ -5418,17 +5507,29 @@
     }
 
     function exportTerminalListCsv() {
-        if (!terminalListRows || !terminalListRows.length) {
-            showToast('请先加载终端列表后再导出。', 'warning');
-            return;
+        exportTerminalListCsvAsync();
+    }
+
+    async function exportTerminalListCsvAsync() {
+        let rows = [];
+        try {
+            const query = getTerminalListParams(true, true);
+            const response = await fetch(`/api/mac_bindings?${query.toString()}`);
+            if (response.redirected) { window.location.href = response.url; return; }
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.msg || '导出终端列表失败');
+            rows = (result.data && result.data.rows) || [];
+        } catch (error) {
+            return showToast(error.message || '导出终端列表失败', 'danger');
         }
+        if (!rows.length) return showToast('当前筛选条件下没有可导出的终端记录。', 'warning');
         const headers = ['MAC', 'IP', '交换机名称', '交换机IP', '端口', 'VLAN', '模式', '加入/更新时间'];
         const escapeCsv = (value) => {
             const text = String(value ?? '');
             return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
         };
         const lines = [headers.map(escapeCsv).join(',')];
-        terminalListRows.forEach(row => {
+        rows.forEach(row => {
             lines.push([row.mac_address, row.ip_address, row.switch_name || '', row.switch_ip, row.port, row.vlan || '', row.mode || '', row.update_time || ''].map(escapeCsv).join(','));
         });
         const csv = '\ufeff' + lines.join('\r\n');

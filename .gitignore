@@ -39,6 +39,7 @@ net_assets.key
 server-*.log
 sygaSwitchAdmin_source_*.zip
 sygaSwitchAdmin_base.tar.gz
+!sygaSwitchAdmin_base.tar.gz
 
 # 本地开发记录：GitHub 仅保留 README.md
 *.md

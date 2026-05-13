@@ -72,9 +72,20 @@ def create_terminal_state_blueprint(
         try:
             limit = request.args.get('limit', '500')
             limit = max(1, min(5000, int(limit)))
+            offset = max(0, int(request.args.get('offset', '0') or 0))
             switch_ip = str(request.args.get('switch_ip', '')).strip()
             if switch_ip:
                 switch_ip = normalize_ip(switch_ip, '交换机 IP')
+            if str(request.args.get('paged', '')).lower() in ('1', 'true', 'yes'):
+                data = db.get_mac_bindings_page(
+                    limit=min(limit, 200),
+                    offset=offset,
+                    switch_ip=switch_ip or None,
+                    keyword=request.args.get('keyword', ''),
+                    mode=request.args.get('mode', ''),
+                    state=request.args.get('state', ''),
+                )
+                return jsonify({'status': 'success', 'data': data})
             rows = db.get_mac_bindings(limit=limit, switch_ip=switch_ip or None)
             return jsonify({'status': 'success', 'data': rows})
         except ValueError as e:

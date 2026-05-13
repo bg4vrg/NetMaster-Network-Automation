@@ -1333,6 +1333,133 @@ def get_mac_bindings(limit=500, switch_ip=None):
     return [dict(row) for row in rows]
 
 
+def get_mac_bindings_page(limit=50, offset=0, switch_ip=None, keyword='', mode='', state=''):
+    conn = get_db()
+    cur = conn.cursor()
+    limit = max(1, min(int(limit or 50), 200))
+    offset = max(0, int(offset or 0))
+    keyword = str(keyword or '').strip()
+    mode = str(mode or '').strip().lower()
+    state = str(state or '').strip()
+
+    where = []
+    params = []
+    if switch_ip:
+        where.append('mb.switch_ip = ?')
+        params.append(switch_ip)
+    if mode in ('access', 'trunk'):
+        where.append('COALESCE(mb.mode, ?) = ?')
+        params.extend(['access', mode])
+    if keyword:
+        like = f'%{keyword}%'
+        where.append(
+            '''(
+                mb.mac_address LIKE ?
+                OR mb.ip_address LIKE ?
+                OR mb.switch_ip LIKE ?
+                OR COALESCE(sw.name, '') LIKE ?
+                OR mb.port LIKE ?
+                OR COALESCE(mb.vlan, '') LIKE ?
+                OR COALESCE(mb.mode, '') LIKE ?
+                OR COALESCE(mb.update_time, '') LIKE ?
+            )'''
+        )
+        params.extend([like] * 8)
+    where_sql = 'WHERE ' + ' AND '.join(where) if where else ''
+    stale_expr = "((julianday('now', 'localtime') - julianday(COALESCE(update_time, ''))) > 3)"
+
+    cte = f'''
+        WITH base AS (
+            SELECT
+                mb.mac_address,
+                mb.ip_address,
+                mb.switch_ip,
+                COALESCE(sw.name, '') AS switch_name,
+                mb.port,
+                mb.vlan,
+                COALESCE(mb.mode, 'access') AS mode,
+                mb.update_time
+            FROM mac_bindings mb
+            LEFT JOIN switches sw ON sw.ip = mb.switch_ip
+            {where_sql}
+        ),
+        ip_conflicts AS (
+            SELECT ip_address
+            FROM base
+            WHERE COALESCE(ip_address, '') <> ''
+            GROUP BY ip_address
+            HAVING COUNT(DISTINCT mac_address) > 1
+        ),
+        mac_conflicts AS (
+            SELECT mac_address
+            FROM base
+            WHERE COALESCE(mac_address, '') <> ''
+            GROUP BY mac_address
+            HAVING COUNT(DISTINCT switch_ip || '|' || port || '|' || COALESCE(ip_address, '')) > 1
+        ),
+        marked AS (
+            SELECT
+                base.*,
+                CASE WHEN ip_conflicts.ip_address IS NULL THEN 0 ELSE 1 END AS ip_conflict,
+                CASE WHEN mac_conflicts.mac_address IS NULL THEN 0 ELSE 1 END AS mac_conflict,
+                CASE WHEN {stale_expr} THEN 1 ELSE 0 END AS stale
+            FROM base
+            LEFT JOIN ip_conflicts ON ip_conflicts.ip_address = base.ip_address
+            LEFT JOIN mac_conflicts ON mac_conflicts.mac_address = base.mac_address
+        )
+    '''
+    state_sql = ''
+    if state == 'ip_conflict':
+        state_sql = 'WHERE ip_conflict = 1'
+    elif state == 'mac_conflict':
+        state_sql = 'WHERE mac_conflict = 1'
+    elif state == 'stale':
+        state_sql = 'WHERE stale = 1'
+
+    cur.execute(
+        cte + f'''
+        SELECT COUNT(*) AS total,
+               SUM(ip_conflict) AS ip_conflict_rows,
+               COUNT(DISTINCT CASE WHEN ip_conflict = 1 THEN ip_address END) AS ip_conflict_count,
+               SUM(mac_conflict) AS mac_conflict_rows,
+               COUNT(DISTINCT CASE WHEN mac_conflict = 1 THEN mac_address END) AS mac_conflict_count,
+               SUM(stale) AS stale_count
+        FROM marked
+        {state_sql}
+        ''',
+        params,
+    )
+    summary = dict(cur.fetchone() or {})
+    cur.execute(
+        cte + f'''
+        SELECT *
+        FROM marked
+        {state_sql}
+        ORDER BY update_time DESC, switch_ip, port, mac_address
+        LIMIT ? OFFSET ?
+        ''',
+        params + [limit, offset],
+    )
+    rows = [dict(row) for row in cur.fetchall()]
+    total = int(summary.get('total') or 0)
+    conn.close()
+    return {
+        'rows': rows,
+        'total': total,
+        'limit': limit,
+        'offset': offset,
+        'next_offset': offset + len(rows),
+        'has_more': offset + len(rows) < total,
+        'summary': {
+            'ip_conflict_count': int(summary.get('ip_conflict_count') or 0),
+            'ip_conflict_rows': int(summary.get('ip_conflict_rows') or 0),
+            'mac_conflict_count': int(summary.get('mac_conflict_count') or 0),
+            'mac_conflict_rows': int(summary.get('mac_conflict_rows') or 0),
+            'stale_count': int(summary.get('stale_count') or 0),
+        },
+    }
+
+
 def get_port_profiles():
     conn = get_db()
     cur = conn.cursor()

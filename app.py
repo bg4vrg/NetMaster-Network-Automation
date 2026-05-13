@@ -82,7 +82,7 @@ from xlsx_utils import autosize_worksheet, send_xlsx_workbook
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_h3c_admin_tool_2026'
 
-APP_VERSION = "2.54.5"
+APP_VERSION = "2.54.8"
 APP_RELEASE_DATE = "2026-05-09"
 APP_VERSION_INFO = {
     "version": APP_VERSION,
@@ -104,6 +104,10 @@ APP_VERSION_INFO = {
         "审计日志和首页看板，支持专网离线运行，无外部 CDN 或远程 API 依赖",
     ],
     "updates": [
+        "终端列表改为后端分页和前端滚动懒加载，搜索、交换机、模式和状态筛选均由后端过滤，避免全量加载卡顿",
+        "终端列表增加请求锁和状态缓存，重复点击页面不再反复触发全量读取",
+        "告警中心完整设备列表改为设备、告警统计、高频端口、处理建议、风险操作五列布局，减少右侧大片空白",
+        "告警中心风险栏去除重复风险分，操作按钮固定单行，详情按钮支持再次点击收起",
         "准入合规分析收紧疑似废弃下线判断：同一 MAC 只要在 IP管理或9200平台存在阈值内近期记录，就不再按废弃下线分流",
         "准入合规分析新增疑似废弃下线判断：IP管理与9200均为超过阈值的旧记录且未入人工台账时优先分流，减少历史残留误报",
         "准入合规分析新增每条风险的判定依据，并同步到页面表格和 CSV 导出",

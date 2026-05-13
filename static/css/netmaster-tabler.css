@@ -661,6 +661,139 @@ body > .container > :not(.nav-tabs) {
   padding-right: 4px;
 }
 
+.alarm-device-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.15fr) minmax(240px, .9fr) minmax(260px, 1fr) minmax(320px, 1.35fr) 150px;
+  gap: 18px;
+  align-items: start;
+}
+
+.alarm-device-identity,
+.alarm-device-metrics,
+.alarm-device-ports,
+.alarm-device-advice {
+  min-width: 0;
+}
+
+.alarm-device-section-title {
+  color: var(--nm-muted);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.alarm-device-side {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  width: 150px;
+}
+
+.alarm-device-suggestion {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.alarm-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(58px, 1fr));
+  gap: 6px;
+}
+
+.alarm-stat-grid span {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid #dbe5f2;
+  border-radius: 6px;
+  background: #f8fbff;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.alarm-stat-grid b,
+.alarm-stat-grid em {
+  display: inline;
+  line-height: 1.15;
+}
+
+.alarm-stat-grid b {
+  color: var(--nm-text);
+  font-size: 16px;
+}
+
+.alarm-stat-grid em {
+  color: var(--nm-muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.alarm-device-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.alarm-device-actions .btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.alarm-chip-row-tight {
+  max-height: 58px;
+  overflow: hidden;
+}
+
+@media (max-width: 1500px) {
+  .alarm-device-layout {
+    grid-template-columns: minmax(230px, 1fr) minmax(240px, .9fr) minmax(280px, 1.2fr) 150px;
+  }
+
+  .alarm-device-ports {
+    grid-column: 2 / span 1;
+  }
+
+  .alarm-device-advice {
+    grid-column: 3 / span 1;
+  }
+}
+
+@media (max-width: 1180px) {
+  .alarm-device-layout {
+    grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr) 150px;
+  }
+
+  .alarm-device-advice {
+    grid-column: 1 / span 2;
+  }
+}
+
+@media (max-width: 768px) {
+  .alarm-device-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .alarm-device-ports,
+  .alarm-device-advice {
+    grid-column: auto;
+  }
+
+  .alarm-device-side {
+    justify-items: start;
+    width: auto;
+  }
+
+  .alarm-device-actions {
+    justify-content: flex-start;
+  }
+}
+
 .permission-summary {
   display: grid;
   gap: 4px;
